@@ -25,6 +25,11 @@ int dce_setenv (const char *name, const char *value, int overwrite);
 int dce_unsetenv (const char *name);
 int dce_clearenv (void);
 int dce_mkstemp (char *temp);
+void * dce_reallocarray (void *ptr, size_t nmemb, size_t size);
+long int dce___isoc23_strtol (const char *nptr, char **endptr, int base);
+long long int dce___isoc23_strtoll (const char *nptr, char **endptr, int base);
+long unsigned int dce___isoc23_strtoul (const char *nptr, char **endptr, int base);
+long long unsigned int dce___isoc23_strtoull (const char *nptr, char **endptr, int base);
 FILE * dce_tmpfile(void);
 int dce_rename (const char *oldpath, const char *newpath);
 

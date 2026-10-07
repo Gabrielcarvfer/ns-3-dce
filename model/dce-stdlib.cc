@@ -8,6 +8,7 @@
 #include "ns3/log.h"
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 
 
 NS_LOG_COMPONENT_DEFINE ("DceStdlib");
@@ -152,4 +153,32 @@ int dce_rename (const char *oldpath, const char *newpath)
       return -1;
     }
   return 0;
+}
+
+void * dce_reallocarray (void *ptr, size_t nmemb, size_t size)
+{
+  if (size != 0 && nmemb > SIZE_MAX / size)
+    {
+      Current ()->err = ENOMEM;
+      return 0;
+    }
+  return dce_realloc (ptr, nmemb * size);
+}
+
+// glibc 2.38 and later resolve strtol() and friends to these C23 variants.
+long int dce___isoc23_strtol (const char *nptr, char **endptr, int base)
+{
+  return dce_strtol (nptr, endptr, base);
+}
+long long int dce___isoc23_strtoll (const char *nptr, char **endptr, int base)
+{
+  return dce_strtoll (nptr, endptr, base);
+}
+long unsigned int dce___isoc23_strtoul (const char *nptr, char **endptr, int base)
+{
+  return dce_strtoul (nptr, endptr, base);
+}
+long long unsigned int dce___isoc23_strtoull (const char *nptr, char **endptr, int base)
+{
+  return dce_strtoull (nptr, endptr, base);
 }

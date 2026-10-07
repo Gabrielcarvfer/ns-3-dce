@@ -623,6 +623,7 @@ def build(bld):
         'model/utils.cc',
         'model/unix-fd.cc',
         'model/unix-file-fd.cc',
+        'model/host-socket-fd.cc',
         'model/unix-socket-fd.cc',
         'model/unix-datagram-socket-fd.cc',
         'model/unix-stream-socket-fd.cc',
@@ -711,6 +712,7 @@ def build(bld):
         'helper/ipv4-dce-routing-helper.cc',
         'helper/dce-manager-helper.cc',
         'helper/dce-application-helper.cc',
+        'helper/dce-x11-helper.cc',
         'helper/ccn-client-helper.cc',
         'helper/linux-stack-helper.cc',
         ]
@@ -742,6 +744,7 @@ def build(bld):
         'model/linux/linux-sctp6-socket-factory.h',
         'helper/dce-manager-helper.h',
         'helper/dce-application-helper.h',
+        'helper/dce-x11-helper.h',
         'helper/ccn-client-helper.h',
         'helper/ipv4-dce-routing-helper.h',
         'helper/linux-stack-helper.h',
