@@ -1,0 +1,67 @@
+From: Gabriel Ferreira <gabrielcarvfer@gmail.com>
+Subject: [PATCH] lib: cancel the schedule_timeout() event when woken up early
+
+schedule_timeout() schedules a wakeup event for the current task and then
+waits. When the task is woken up before the timeout expires (data arrived,
+or the DCE process received a signal), the event stays in the simulator
+queue and later wakes up whatever is at that address. If the process has
+exited in the meantime, the DCE task has been deleted and the simulator
+crashes in TaskManager::Schedule with a dangling task pointer. ping(8)
+triggers this: it uses SO_RCVTIMEO and exits from its SIGALRM handler.
+
+Cancel the event when the wait ends before it fired. The event holder on
+the DCE side is freed once the event fires, so cancelling is only valid
+while the event is still pending, hence the flag.
+
+diff --git a/arch/lib/sched.c b/arch/lib/sched.c
+index 6614fa10..22852310 100644
+--- a/arch/lib/sched.c
++++ b/arch/lib/sched.c
+@@ -306,17 +306,24 @@ void schedule(void)
+ 	lib_task_wait();
+ }
+ 
++struct schedule_timeout_ctx {
++	struct SimTask *task;
++	void *event;
++	int fired;
++};
++
+ static void trampoline(void *context)
+ {
+-	struct SimTask *task = context;
++	struct schedule_timeout_ctx *ctx = context;
+ 
+-	lib_task_wakeup(task);
++	ctx->fired = 1;
++	lib_task_wakeup(ctx->task);
+ }
+ 
+ signed long schedule_timeout(signed long timeout)
+ {
+ 	u64 ns;
+-	struct SimTask *self;
++	struct schedule_timeout_ctx ctx;
+ 
+ 	if (timeout == MAX_SCHEDULE_TIMEOUT) {
+ 		lib_task_wait();
+@@ -324,9 +331,17 @@ signed long schedule_timeout(signed long timeout)
+ 	}
+ 	lib_assert(timeout >= 0);
+ 	ns = ((__u64)timeout) * (1000000000 / HZ);
+-	self = lib_task_current();
+-	lib_event_schedule_ns(ns, &trampoline, self);
++	ctx.task = lib_task_current();
++	ctx.fired = 0;
++	/* ctx lives on this task's stack, which is valid until the wait
++	 * below returns: the task is blocked in the meantime. */
++	ctx.event = lib_event_schedule_ns(ns, &trampoline, &ctx);
+ 	lib_task_wait();
++	if (!ctx.fired)
++		/* Woken up early: drop the pending timeout. Otherwise it would
++		 * later wake up a task that may not exist anymore (e.g. the
++		 * process exited from a signal handler, like ping does). */
++		lib_event_cancel(ctx.event);
+ 	/* we know that we are always perfectly on time. */
+ 	return 0;
+ }
