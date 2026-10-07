@@ -199,6 +199,7 @@ DceManagerTestSuite::DceManagerTestSuite ()
     {  "test-timer-fd", 0, "", false, false, NS3_STACK|LINUX_STACK|FREEBSD_STACK},
     {  "test-eventfd", 0, "", false, false, NS3_STACK|LINUX_STACK|FREEBSD_STACK},
     {  "test-epoll", 0, "", false, false, NS3_STACK|LINUX_STACK|FREEBSD_STACK},
+    {  "test-futex", 0, "", false, false, NS3_STACK|LINUX_STACK|FREEBSD_STACK},
     {  "test-stdlib", 0, "", false, false, NS3_STACK|LINUX_STACK|FREEBSD_STACK},
     {  "test-fork", 0, "", false, true, NS3_STACK|LINUX_STACK|FREEBSD_STACK},
     {  "test-select", 3600, "", true, false, NS3_STACK|LINUX_STACK}, // freebsd-sim has no sock_poll
