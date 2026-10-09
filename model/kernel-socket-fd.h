@@ -1,24 +1,27 @@
+/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 #ifndef KERNEL_SOCKET_FD_H
 #define KERNEL_SOCKET_FD_H
 
 #include "unix-fd.h"
 #include "ns3/ptr.h"
 
-extern "C" {
-struct SimSocket;
-}
-
 namespace ns3 {
 
 class KernelSocketFdFactory;
 
-class Waiter;
-
+/**
+ * A socket of a node's LKL kernel: every operation is the corresponding
+ * kernel system call on the kernel's file descriptor.
+ */
 class KernelSocketFd : public UnixFd
 {
 public:
-  KernelSocketFd (Ptr<KernelSocketFdFactory> factory, struct SimSocket *socket);
+  KernelSocketFd (Ptr<KernelSocketFdFactory> factory, int fd);
   virtual ~KernelSocketFd ();
+
+  int GetKernelFd (void) const;
+  /** Wake the tasks waiting in poll or select for these events. */
+  void NotifyEvents (short events);
 
   virtual int Close (void);
   virtual ssize_t Write (const void *buf, size_t count);
@@ -47,20 +50,18 @@ public:
                        const struct itimerspec *new_value,
                        struct itimerspec *old_value);
   virtual int Gettime (struct itimerspec *cur_value) const;
-
-  virtual bool HangupReceived (void) const;
-
-  virtual int Poll (PollTable* ptable);
   virtual int Ftruncate (off_t length);
+  virtual bool HangupReceived (void) const;
+  virtual int Poll (PollTable* ptable);
   virtual int Fsync (void);
 
-  void PollEvent (int flag);
-
-
 private:
+  // Kernel system call; on error, sets the current thread's errno.
+  long Call (long no, long a0 = 0, long a1 = 0, long a2 = 0,
+             long a3 = 0, long a4 = 0, long a5 = 0) const;
+
   Ptr<KernelSocketFdFactory> m_factory;
-  struct SimSocket *m_socket;
-  int m_statusFlags;
+  int m_fd;
 };
 
 } // namespace ns3

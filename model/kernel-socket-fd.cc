@@ -1,22 +1,30 @@
+/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 #include "kernel-socket-fd.h"
 #include "kernel-socket-fd-factory.h"
-#include "utils.h"
+#include "lkl-kernel.h"
 #include "process.h"
+#include "utils.h"
+#include "file-usage.h"
+#include "wait-queue.h"
 #include "ns3/log.h"
+#include <lkl/asm/unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <sys/mman.h> // for MMAP_FAILED
 #include <poll.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
 
 NS_LOG_COMPONENT_DEFINE ("DceKernelSocketFd");
 
 namespace ns3 {
 
-KernelSocketFd::KernelSocketFd (Ptr<KernelSocketFdFactory> factory, struct SimSocket *socket)
+KernelSocketFd::KernelSocketFd (Ptr<KernelSocketFdFactory> factory, int fd)
   : m_factory (factory),
-    m_socket (socket),
-    m_statusFlags (0)
+    m_fd (fd)
 {
+  NS_LOG_FUNCTION (this << fd);
+  m_factory->Register (this);
 }
 
 KernelSocketFd::~KernelSocketFd ()
@@ -24,217 +32,256 @@ KernelSocketFd::~KernelSocketFd ()
 }
 
 int
+KernelSocketFd::GetKernelFd (void) const
+{
+  return m_fd;
+}
+
+void
+KernelSocketFd::NotifyEvents (short events)
+{
+  WakeWaiters (&events);
+}
+
+long
+KernelSocketFd::Call (long no, long a0, long a1, long a2, long a3, long a4, long a5) const
+{
+  long params[6] = { a0, a1, a2, a3, a4, a5 };
+  long ret = m_factory->GetKernel ()->Syscall (no, params);
+  if (ret < 0)
+    {
+      Current ()->err = -ret;
+      return -1;
+    }
+  return ret;
+}
+
+int
 KernelSocketFd::Close (void)
 {
-  return m_factory->Close (m_socket);
+  NS_LOG_FUNCTION (this);
+  m_factory->Unregister (this);
+  return Call (__lkl__NR_close, m_fd);
 }
+
 ssize_t
 KernelSocketFd::Write (const void *buf, size_t count)
 {
-  NS_LOG_FUNCTION (this << buf << count);
-  struct msghdr msg;
-  struct iovec iov;
-  msg.msg_control = 0;
-  msg.msg_controllen = 0;
-  msg.msg_iovlen = 1;
-  msg.msg_iov = &iov;
-  iov.iov_len = count;
-  iov.iov_base = (void*)buf;
-  msg.msg_name = 0;
-  msg.msg_namelen = 0;
-  ssize_t retval = Sendmsg (&msg, 0);
-  return retval;
+  return Call (__lkl__NR_write, m_fd, (long)buf, count);
 }
+
 ssize_t
 KernelSocketFd::Read (void *buf, size_t count)
 {
-  NS_LOG_FUNCTION (this << buf << count);
-  struct msghdr msg;
-  struct iovec iov;
-  msg.msg_control = 0;
-  msg.msg_controllen = 0;
-  msg.msg_iovlen = 1;
-  msg.msg_iov = &iov;
-  iov.iov_len = count;
-  iov.iov_base = buf;
-  msg.msg_name = 0;
-  msg.msg_namelen = 0;
-  ssize_t retval = Recvmsg (&msg, 0);
-  return retval;
+  return Call (__lkl__NR_read, m_fd, (long)buf, count);
 }
+
 ssize_t
 KernelSocketFd::Recvmsg (struct msghdr *msg, int flags)
 {
-  bool nonBlocking = (m_statusFlags & O_NONBLOCK) == O_NONBLOCK;
-  flags |= nonBlocking ? MSG_DONTWAIT : 0;
-  return m_factory->Recvmsg (m_socket, msg, flags);
+  return Call (__lkl__NR_recvmsg, m_fd, (long)msg, flags);
 }
+
 ssize_t
 KernelSocketFd::Sendmsg (const struct msghdr *msg, int flags)
 {
-  bool nonBlocking = (m_statusFlags & O_NONBLOCK) == O_NONBLOCK;
-  flags |= nonBlocking ? MSG_DONTWAIT : 0;
-  return m_factory->Sendmsg (m_socket, msg, flags);
+  return Call (__lkl__NR_sendmsg, m_fd, (long)msg, flags);
 }
+
 bool
 KernelSocketFd::Isatty (void) const
 {
   return false;
 }
+
 int
-KernelSocketFd::Setsockopt (int level, int optname,
-                           const void *optval, socklen_t optlen)
+KernelSocketFd::Setsockopt (int level, int optname, const void *optval, socklen_t optlen)
 {
-  return m_factory->Setsockopt (m_socket, level, optname, optval, optlen);
+  return Call (__lkl__NR_setsockopt, m_fd, level, optname, (long)optval, optlen);
 }
+
 int
-KernelSocketFd::Getsockopt (int level, int optname,
-                           void *optval, socklen_t *optlen)
+KernelSocketFd::Getsockopt (int level, int optname, void *optval, socklen_t *optlen)
 {
-  return m_factory->Getsockopt (m_socket, level, optname, optval, optlen);
+  return Call (__lkl__NR_getsockopt, m_fd, level, optname, (long)optval, (long)optlen);
 }
+
 int
 KernelSocketFd::Getsockname (struct sockaddr *name, socklen_t *namelen)
 {
-  return m_factory->Getsockname (m_socket, name, namelen);
+  return Call (__lkl__NR_getsockname, m_fd, (long)name, (long)namelen);
 }
+
 int
 KernelSocketFd::Getpeername (struct sockaddr *name, socklen_t *namelen)
 {
-  return m_factory->Getpeername (m_socket, name, namelen);
+  return Call (__lkl__NR_getpeername, m_fd, (long)name, (long)namelen);
 }
+
 int
 KernelSocketFd::Ioctl (unsigned long request, char *argp)
 {
-  return m_factory->Ioctl (m_socket, request, argp);
+  return Call (__lkl__NR_ioctl, m_fd, request, (long)argp);
 }
+
 int
 KernelSocketFd::Bind (const struct sockaddr *my_addr, socklen_t addrlen)
 {
-  return m_factory->Bind (m_socket, my_addr, addrlen);
+  return Call (__lkl__NR_bind, m_fd, (long)my_addr, addrlen);
 }
+
 int
 KernelSocketFd::Connect (const struct sockaddr *my_addr, socklen_t addrlen)
 {
-  return m_factory->Connect (m_socket, my_addr, addrlen, m_statusFlags);
+  return Call (__lkl__NR_connect, m_fd, (long)my_addr, addrlen);
 }
+
 int
 KernelSocketFd::Listen (int backlog)
 {
-  return m_factory->Listen (m_socket, backlog);
+  return Call (__lkl__NR_listen, m_fd, backlog);
 }
+
 int
 KernelSocketFd::Shutdown (int how)
 {
-  return m_factory->Shutdown (m_socket, how);
+  return Call (__lkl__NR_shutdown, m_fd, how);
 }
+
 int
 KernelSocketFd::Accept (struct sockaddr *my_addr, socklen_t *addrlen)
 {
-  return m_factory->Accept (m_socket, my_addr, addrlen, m_statusFlags);
+  NS_LOG_FUNCTION (this);
+  long kernelFd = Call (__lkl__NR_accept4, m_fd, (long)my_addr, (long)addrlen, 0);
+  if (kernelFd < 0)
+    {
+      return -1;
+    }
+  Thread *current = Current ();
+  int fd = UtilsAllocateFd ();
+  if (fd == -1)
+    {
+      Call (__lkl__NR_close, kernelFd);
+      current->err = EMFILE;
+      return -1;
+    }
+  UnixFd *unixFd = new KernelSocketFd (m_factory, kernelFd);
+  unixFd->IncFdCount ();
+  current->process->openFiles[fd] = new FileUsage (fd, unixFd);
+  return fd;
 }
+
 void *
 KernelSocketFd::Mmap (void *start, size_t length, int prot, int flags, off64_t offset)
 {
-  GET_CURRENT (start << length << prot << flags << offset);
-  current->err = ENODEV;
+  Current ()->err = ENODEV;
   return MAP_FAILED;
 }
+
 off64_t
 KernelSocketFd::Lseek (off64_t offset, int whence)
 {
-  GET_CURRENT (offset << whence);
-  current->err = ESPIPE;
+  Current ()->err = ESPIPE;
   return -1;
 }
+
 int
 KernelSocketFd::Fxstat (int ver, struct ::stat *buf)
 {
-  GET_CURRENT (ver << buf);
   buf->st_mode = S_IFSOCK;
   buf->st_dev = -1;
   buf->st_blksize = 0;
   return 0;
 }
+
 int
 KernelSocketFd::Fxstat64 (int ver, struct ::stat64 *buf)
 {
-  GET_CURRENT (ver << buf);
   buf->st_mode = S_IFSOCK;
   buf->st_dev = -1;
   buf->st_blksize = 0;
   return 0;
 }
+
 int
 KernelSocketFd::Fcntl (int cmd, unsigned long arg)
 {
   switch (cmd)
     {
-    case F_GETFL: //XXX this command should also consider the flags O_APPEND and O_ASYNC
-      return m_statusFlags;
-      break;
+    case F_GETFL:
     case F_SETFL:
-      m_statusFlags = arg;
-      return 0;
-      break;
+      // The kernel keeps O_NONBLOCK and applies it to every operation.
+      return Call (__lkl__NR_fcntl, m_fd, cmd, arg);
     case F_GETFD:
       return m_fdFlags;
-      break;
     case F_SETFD:
       m_fdFlags = arg;
       return 0;
-      break;
     default:
-      return UnixFd::Fcntl(cmd, arg );
+      return UnixFd::Fcntl (cmd, arg);
     }
 }
+
 int
-KernelSocketFd::Settime (int flags,
-                        const struct itimerspec *new_value,
-                        struct itimerspec *old_value)
+KernelSocketFd::Settime (int flags, const struct itimerspec *new_value, struct itimerspec *old_value)
 {
-  NS_LOG_FUNCTION (this << Current () << flags << new_value << old_value);
-  NS_ASSERT (Current () != 0);
-  Thread *current = Current ();
-  current->err = EINVAL;
+  Current ()->err = EINVAL;
   return -1;
 }
+
 int
 KernelSocketFd::Gettime (struct itimerspec *cur_value) const
 {
-  NS_LOG_FUNCTION (this << Current () << cur_value);
-  NS_ASSERT (Current () != 0);
-  Thread *current = Current ();
-  current->err = EINVAL;
+  Current ()->err = EINVAL;
   return -1;
 }
-bool
-KernelSocketFd::HangupReceived (void) const
-{
-  // XXX: TO BE IMPLEMENTED OR NOT :)
-  return false;
-}
-int
-KernelSocketFd::Poll (PollTable* ptable)
-{
-  return m_factory->Poll (m_socket, ptable);
-}
+
 int
 KernelSocketFd::Ftruncate (off_t length)
 {
-  NS_LOG_FUNCTION (this << Current ());
-  NS_ASSERT (Current () != 0);
-  Thread *current = Current ();
-  current->err = EINVAL;
+  Current ()->err = EINVAL;
   return -1;
 }
+
+bool
+KernelSocketFd::HangupReceived (void) const
+{
+  return false;
+}
+
+int
+KernelSocketFd::Poll (PollTable* ptable)
+{
+  short wanted = ptable ? ptable->GetEventMask () : (POLLIN | POLLOUT | POLLPRI | POLLRDHUP);
+  struct pollfd pfd;
+  pfd.fd = m_fd;
+  pfd.events = wanted;
+  pfd.revents = 0;
+  struct
+  {
+    long long tv_sec;
+    long long tv_nsec;
+  } zero = { 0, 0 };
+  long params[6] = { (long)&pfd, 1, (long)&zero, 0, 8, 0 };
+  long ret = m_factory->GetKernel ()->Syscall (__lkl__NR_ppoll, params);
+  if (ret < 0)
+    {
+      return POLLERR;
+    }
+  if (ptable)
+    {
+      // Get woken when the kernel reports one of these events.
+      ptable->PollWait (this);
+      m_factory->Watch (this);
+    }
+  return pfd.revents;
+}
+
 int
 KernelSocketFd::Fsync (void)
 {
-  Thread *current = Current ();
-  NS_LOG_FUNCTION (this << current);
-  NS_ASSERT (current != 0);
-  current->err = EBADF;
+  Current ()->err = EINVAL;
   return -1;
 }
+
 } // namespace ns3
