@@ -33,8 +33,12 @@
 #include "ns3/mobility-module.h"
 
 #include <sys/stat.h>
+#include <netinet/in.h>
 #include <unistd.h>
 #include <fstream>
+#include <filesystem>
+#include <map>
+#include <limits.h>
 
 using namespace ns3;
 
@@ -57,10 +61,85 @@ SetPosition (Ptr<Node> node, double x, double y)
 }
 
 // The web site served by the simulated server.
+static bool
+FindInDcePath (const std::string &name, std::string &found)
+{
+  char resolved[PATH_MAX];
+  if (realpath (name.c_str (), resolved) != 0)
+    {
+      found = resolved;
+      return true;
+    }
+  if (getenv ("DCE_PATH") == 0)
+    {
+      return false;
+    }
+  std::istringstream dcePath (getenv ("DCE_PATH"));
+  std::string dir;
+  while (std::getline (dcePath, dir, ':'))
+    {
+      if (dir != "" && realpath ((dir + "/" + name).c_str (), resolved) != 0)
+        {
+          found = resolved;
+          return true;
+        }
+    }
+  return false;
+}
+
 static void
 CreateSite (void)
 {
   mkdir ("files-0", 0755);
+  // The clips are copied, not linked: thttpd refuses symbolic links that
+  // point outside its document root.
+  std::string video;
+  std::error_code ec;
+  if (FindInDcePath ("video.ts", video))
+    {
+      std::filesystem::copy_file (video, "files-0/video.ts", std::filesystem::copy_options::overwrite_existing, ec);
+    }
+  // the same clip as MPEG-1 program stream, the format Northstar's player decodes
+  if (FindInDcePath ("video.mpg", video))
+    {
+      std::filesystem::copy_file (video, "files-0/video.mpg", std::filesystem::copy_options::overwrite_existing, ec);
+    }
+  std::ofstream player ("files-0/video.html");
+  player << "<html><head><title>Video over simulated Wi-Fi</title>\n"
+            "<style>body{font-family:sans-serif;margin:2em;background:#f4f6fa}h1{color:#1f4e79}"
+            "video{border:2px solid #1f4e79;background:#000}</style></head>\n"
+            "<body><h1>Video over simulated Wi-Fi</h1>\n"
+            "<p>The clip below is fetched from thttpd on the server station through the simulated\n"
+            "802.11n network and decoded by the browser's own MPEG-1 player, inside the simulation.</p>\n"
+            "<video id=\"v\" controls autoplay width=\"720\" height=\"405\" src=\"video.mpg\" type=\"video/mpeg\">\n"
+            "This browser cannot play MPEG-1 video.</video>\n"
+            // Northstar's <video> element is picture only; its <audio> element
+            // decodes the MP2 track of the same program stream through the SDL2
+            // mixer, played on the host's PulseAudio server through DCE.
+            // Muted autoplay is allowed without a click; the script unmutes the
+            // soundtrack and lines it up with the picture once the video plays.
+            "<audio id=\"a\" autoplay muted src=\"video.mpg\" type=\"video/mpeg\"></audio>\n"
+            "<p><button onclick=\"var v=document.getElementById('v'),a=document.getElementById('a');"
+            "a.pause();v.pause();v.currentTime=0;a.currentTime=0;a.muted=false;v.play();a.play();\">"
+            "&#9654; Play again from the start</button> <span id=\"s\"></span>\n"
+            "<script>\n"
+            "var v=document.getElementById('v'),a=document.getElementById('a'),started=false;\n"
+            "function sound(){if(started)return;started=true;a.currentTime=v.currentTime;"
+            "a.muted=false;a.volume=1.0;a.play();}\n"
+            "v.addEventListener('playing',sound);\n"
+            // the sound is the master clock: the mixer starts a little late
+            // and keeps about 0.1 s queued in the output device
+            "setInterval(function(){if(!started||a.paused||v.paused)return;"
+            "var t=a.currentTime-0.1;if(Math.abs(v.currentTime-t)>0.12)v.currentTime=t;},500);\n"
+            "window.addEventListener('load',function(){if(!v.paused)sound();});\n"
+            "setInterval(function(){document.getElementById('s').textContent="
+            "'video '+v.currentTime.toFixed(1)+' s, sound '+a.currentTime.toFixed(1)+' s'"
+            "+(a.muted?' (muted)':'');},1000);\n"
+            "</script>\n"
+            "<p><a href=\"video.mpg\">video.mpg</a> (MPEG-1 video + MP2 audio, 2.3 MB) &middot;\n"
+            "<a href=\"video.ts\">video.ts</a> (H.264/AAC MPEG-TS, 1.2 MB, streamed by dce-wifi-video) &middot;\n"
+            "<a href=\"index.html\">Back</a></p></body></html>\n";
+  player.close ();
   std::ofstream index ("files-0/index.html");
   index << "<html><head><title>Served from inside ns-3</title>\n"
            "<style>body{font-family:sans-serif;margin:2em;background:#f4f6fa}"
@@ -77,6 +156,11 @@ CreateSite (void)
            "<tr><td>2</td><td>client STA (dillo)</td><td>10.1.1.2</td></tr></table>\n"
            "<p><a href=\"big.html\">A 1 MB page</a> to watch the Wi-Fi link work, and\n"
            "<a href=\"about.html\">how this works</a>.</p>\n"
+           "<p><a href=\"http://10.1.1.1:8080/\">Live number series</a>: a page whose JavaScript keeps\n"
+           "asking a second server on this station for the next number.</p>\n"
+           "<p><a href=\"video.html\">Watch the video sample</a> in the browser's own player\n"
+           "(MPEG-1), or download <a href=\"video.ts\">the MPEG-TS</a> (1.2 MB, H.264/AAC) that\n"
+           "dce-wifi-video streams.</p>\n"
            "<div class=box id=js>JavaScript is <b>off</b> in this browser (Dillo has none).</div>\n"
            "<script>document.getElementById('js').innerHTML = 'JavaScript is <b>running</b> in this browser: '"
            " + navigator.userAgent + ' says 6 * 7 = ' + (6 * 7) + '.';</script>\n"
@@ -108,15 +192,19 @@ main (int argc, char *argv[])
   std::string url = "http://10.1.1.1/";
   std::string browser = "dillo";
   std::string browserArgs = "";
+  std::string browserEnv = "";
   double distance = 10.0;
   double stopTime = 600.0;
+  uint32_t minRequests = 1;
 
   CommandLine cmd (__FILE__);
   cmd.AddValue ("url", "Page the browser opens", url);
   cmd.AddValue ("browser", "Browser binary (a DCE build; default dillo)", browser);
   cmd.AddValue ("browserArgs", "Extra command line options for the browser", browserArgs);
+  cmd.AddValue ("browserEnv", "Extra environment for the browser, comma separated KEY=VALUE pairs", browserEnv);
   cmd.AddValue ("distance", "Distance in meters between the AP and the client STA", distance);
   cmd.AddValue ("stopTime", "Give up after this many seconds if the browser is still running", stopTime);
+  cmd.AddValue ("minRequests", "Fail unless at least this many HTTP requests are seen in the capture", minRequests);
   cmd.Parse (argc, argv);
 
   if (getenv ("DISPLAY") == 0)
@@ -204,12 +292,64 @@ main (int argc, char *argv[])
   apps = dce.Install (server);
   apps.Start (Seconds (1.0));
 
+  // the JSON number server polled by the JavaScript of http://10.1.1.1:8080/
+  dce.SetBinary ("numbers-server");
+  dce.ResetArguments ();
+  dce.AddArgument ("8080");
+  dce.ResetEnvironment ();
+  apps = dce.Install (server);
+  apps.Start (Seconds (1.0));
+
   // the browser
   dce.SetStackSize (1 << 24);
   dce.SetBinary (browser);
   dce.ResetArguments ();
   dce.ResetEnvironment ();
   DceX11Helper::SetEnvironment (dce);
+  if (browser == "northstar")
+    {
+      // GTK4 inside the simulation: software rendering, X11, no dconf, no
+      // accessibility bus; no Landlock/seccomp sandbox (they would apply to
+      // the simulator), no supervisor process.
+      dce.AddEnvironment ("GSK_RENDERER", "cairo");
+      dce.AddEnvironment ("GDK_BACKEND", "x11");
+      dce.AddEnvironment ("GSETTINGS_BACKEND", "memory");
+      dce.AddEnvironment ("NO_AT_BRIDGE", "1");
+      dce.AddEnvironment ("GTK_A11Y", "none");
+      dce.AddEnvironment ("LANG", "C.UTF-8");
+      dce.AddEnvironment ("LC_ALL", "C.UTF-8");
+      dce.AddEnvironment ("NS_NO_SANDBOX", "1");
+      dce.AddArgument ("--no-watchdog");
+      // GApplication registers on the session bus; GIO would otherwise try
+      // to spawn dbus-launch, impossible from the simulation.
+      if (!DceX11Helper::UseSessionBus (dce))
+        {
+          std::cerr << "northstar needs the host's D-Bus session bus (DBUS_SESSION_BUS_ADDRESS)" << std::endl;
+          return 1;
+        }
+      // sound of the <video> player: SDL2 on the host's PulseAudio server
+      if (DceX11Helper::UsePulseAudio (client, dce))
+        {
+          dce.AddEnvironment ("SDL_AUDIODRIVER", "pulseaudio");
+        }
+      else
+        {
+          std::cout << "No PulseAudio socket on the host: the browser will be silent" << std::endl;
+          dce.AddEnvironment ("SDL_AUDIODRIVER", "dummy");
+        }
+    }
+  {
+    std::istringstream is (browserEnv);
+    std::string pair;
+    while (std::getline (is, pair, ','))
+      {
+        size_t eq = pair.find ('=');
+        if (eq != std::string::npos && eq > 0)
+          {
+            dce.AddEnvironment (pair.substr (0, eq), pair.substr (eq + 1));
+          }
+      }
+  }
   {
     std::istringstream is (browserArgs);
     std::string arg;
@@ -219,8 +359,9 @@ main (int argc, char *argv[])
       }
   }
   dce.AddArgument (url);
-  dce.SetUid (0);
-  dce.SetEuid (0);
+  // browsers refuse to run as root
+  dce.SetUid (1000);
+  dce.SetEuid (1000);
   dce.SetFinishedCallback (MakeCallback (&BrowserFinished));
   apps = dce.Install (client);
   apps.Start (Seconds (2.0));
@@ -234,5 +375,28 @@ main (int argc, char *argv[])
   Simulator::Stop (Seconds (stopTime));
   Simulator::Run ();
   Simulator::Destroy ();
+
+  // The capture at the AP must show the browser's HTTP requests.
+  DcePcapCheck capture ("dce-browser-1-0.pcap");
+  uint32_t requests = 0;
+  uint16_t ports[] = { 80, 8080 };
+  for (unsigned i = 0; i < 2; i++)
+    {
+      std::map<std::string, uint32_t> lines = capture.RequestLines (ports[i], "GET ");
+      for (std::map<std::string, uint32_t>::iterator l = lines.begin (); l != lines.end (); ++l)
+        {
+          std::cout << "  port " << ports[i] << ": " << l->second << " x " << l->first << std::endl;
+          requests += l->second;
+        }
+    }
+  std::cout << "Capture dce-browser-1-0.pcap: " << requests << " HTTP requests from the browser, "
+            << capture.PayloadBytes (IPPROTO_TCP, 80) + capture.PayloadBytes (IPPROTO_TCP, 8080)
+            << " TCP payload bytes" << std::endl;
+  if (!capture.Ok () || requests < minRequests)
+    {
+      std::cout << "FAIL: expected at least " << minRequests << " HTTP requests in the capture" << std::endl;
+      return 1;
+    }
+  std::cout << "PASS: the browser fetched from the simulated server over the Wi-Fi link" << std::endl;
   return 0;
 }

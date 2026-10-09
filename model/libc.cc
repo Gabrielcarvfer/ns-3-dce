@@ -3,6 +3,10 @@
 
 struct Libc g_libc;
 
+// glibc 2.32 flag read by libstdc++ and others to skip atomic reference
+// counting in single threaded programs: DCE applications may have threads.
+extern "C" char __libc_single_threaded = 0;
+
 // macros stolen from glibc.
 #define weak_alias(name, aliasname) \
   extern __typeof (name) aliasname __attribute__ ((weak, alias (# name)))

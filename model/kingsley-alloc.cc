@@ -27,7 +27,8 @@ NS_LOG_COMPONENT_DEFINE ("DceKingsleyAlloc");
 
 
 KingsleyAlloc::KingsleyAlloc ()
-  : m_defaultMmapSize (1 << 15)
+  : m_defaultMmapSize (1 << 15),
+    m_cloned (false)
 {
   NS_LOG_FUNCTION (this);
   memset (m_buckets, 0, sizeof(m_buckets));
@@ -86,6 +87,10 @@ KingsleyAlloc::Clone (void)
   NS_LOG_FUNCTION (this << "begin");
   KingsleyAlloc *clone = new KingsleyAlloc ();
   *clone->m_buckets = *m_buckets;
+  // from now on, both heaps live in the same buffers and must be swapped
+  // in and out at every context switch (see SwitchTo).
+  m_cloned = true;
+  clone->m_cloned = true;
   for (std::list<struct KingsleyAlloc::MmapChunk>::iterator i = m_chunks.begin ();
        i != m_chunks.end (); ++i)
     {
@@ -112,6 +117,13 @@ void
 KingsleyAlloc::SwitchTo (void)
 {
   NS_LOG_FUNCTION (this);
+  if (!m_cloned)
+    {
+      // Nothing to swap: a heap that was never fork()ed owns its buffers.
+      // Walking the chunk list (one entry per 32 KB) at every thread switch
+      // dominated the run time of programs with large heaps (web browsers).
+      return;
+    }
   for (std::list<struct KingsleyAlloc::MmapChunk>::const_iterator i = m_chunks.begin ();
        i != m_chunks.end (); ++i)
     {

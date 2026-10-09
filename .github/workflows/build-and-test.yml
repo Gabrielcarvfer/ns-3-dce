@@ -61,12 +61,24 @@ jobs:
             libx11-dev \
             libxext-dev \
             libxv-dev \
+            libpulse-dev \
+            libsdl2-dev \
             libfltk1.3-dev \
             libpng-dev \
             libjpeg-dev \
             autoconf \
             automake \
             libtool \
+            meson \
+            libgtk-4-dev \
+            libuchardet-dev \
+            libpsl-dev \
+            libseccomp-dev \
+            libharfbuzz-dev \
+            libfribidi-dev \
+            libcairo2-dev \
+            libfontconfig-dev \
+            libfreetype-dev \
             xvfb
 
       - name: Configure git safe directory
