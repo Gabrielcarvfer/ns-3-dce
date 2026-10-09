@@ -721,6 +721,7 @@ def build(bld):
         'helper/dce-manager-helper.cc',
         'helper/dce-application-helper.cc',
         'helper/dce-x11-helper.cc',
+        'helper/dce-pcap-check.cc',
         'helper/ccn-client-helper.cc',
         'helper/linux-stack-helper.cc',
         ]
@@ -753,6 +754,7 @@ def build(bld):
         'helper/dce-manager-helper.h',
         'helper/dce-application-helper.h',
         'helper/dce-x11-helper.h',
+        'helper/dce-pcap-check.h',
         'helper/ccn-client-helper.h',
         'helper/ipv4-dce-routing-helper.h',
         'helper/linux-stack-helper.h',
