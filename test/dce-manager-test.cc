@@ -226,6 +226,7 @@ DceManagerTestSuite::DceManagerTestSuite ()
     {  "test-signal", 30, "", false, false, NS3_STACK|LINUX_STACK},
     {  "test-ifindex", 30, "", true, false, NS3_STACK|LINUX_STACK},
     {  "test-emfile", 30, "", true, false, NS3_STACK|LINUX_STACK},
+    {  "test-ipv6-pktinfo", 30, "", true, false, NS3_STACK|LINUX_STACK},
   };
 
   // Prepare directories and files for test-stdio
