@@ -214,6 +214,20 @@ def configure(conf):
                                     have_sctp_tools,
                                     "sctp-tools (netinet/sctp.h) not found")
 
+    have_x11 = conf.check(header_name='X11/Xlib.h', lib='X11', uselib_store='X11',
+                          define_name='HAVE_X11', mandatory=False)
+    conf.env['X11_FOUND'] = have_x11 is not None
+    ns3waf._report_optional_feature(conf, "x11", "X11 client (x11-hello, dce-wifi-video --viewer)",
+                                    have_x11,
+                                    "libx11-dev (X11/Xlib.h) not found")
+
+    have_gtk4 = conf.check_cfg(package='gtk4', args=['--cflags', '--libs'], uselib_store='GTK4',
+                               mandatory=False)
+    conf.env['GTK4_FOUND'] = have_gtk4 is not None
+    ns3waf._report_optional_feature(conf, "gtk4", "GTK4 client (gtk4-hello)",
+                                    have_gtk4,
+                                    "libgtk-4-dev not found")
+
     conf.recurse(os.path.join('utils'))
     conf.recurse('bindings/python')
     ns3waf.print_feature_summary(conf)
@@ -354,6 +368,15 @@ def build_dce_examples(module, bld):
                     ['sctp-server', ['sctp']],
                     ['sctp-client', ['sctp']],
         ]
+    if bld.env['X11_FOUND']:
+        dce_examples += [
+                    ['x11-hello', ['X11']],
+        ]
+    if bld.env['GTK4_FOUND']:
+        module.add_example(**dce_kw(target = 'bin_dce/gtk4-hello',
+                                    source = ['example/gtk4-hello.cc'],
+                                    use = ['GTK4']))
+        bld.install_files('${PREFIX}/bin_dce', 'bin_dce/gtk4-hello', chmod=Utils.O755)
 
     for name,lib in dce_examples:
         module.add_example(**dce_kw(target = 'bin_dce/' + name, 
@@ -491,6 +514,10 @@ def build_dce_kernel_examples(module, bld):
     module.add_example(needed = ['core', 'network', 'internet', 'dce', 'wifi', 'mobility'],
                        target='bin/dce-wifi-video',
                        source=['example/dce-wifi-video.cc'])
+    if bld.env['X11_FOUND']:
+        module.add_example(needed = ['core', 'network', 'internet', 'dce'],
+                           target='bin/dce-x11-hello',
+                           source=['example/dce-x11-hello.cc'])
     # The clip streamed by dce-wifi-video, installed with the DCE binaries so
     # that the example finds it through DCE_PATH.
     bld(rule='cp ${SRC} ${TGT}', source='example/dce-wifi-video-sample.ts',

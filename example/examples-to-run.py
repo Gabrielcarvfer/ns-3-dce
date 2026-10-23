@@ -26,6 +26,12 @@ cpp_examples = [
     # the example fails if the received streams differ from the sent ones.
     ("dce-wifi-video --realtime=0 --fifo=0 --stopTime=60", "FFMPEG_DCE_FOUND == True", "False"),
     ("dce-wifi-video --realtime=0 --fifo=0 --stopTime=60 --stack=ns3", "FFMPEG_DCE_FOUND == True", "False"),
+    # An X11 client drawing a window from inside the simulation through the
+    # host socket passthrough; needs an X server (DISPLAY), e.g. xvfb-run.
+    ("dce-x11-hello --seconds=2", "X11_DCE_FOUND == True and os.getenv('DISPLAY') is not None", "False"),
+    # GLib/GTK4 inside DCE: event loop, threads, futex locks, X11 window.
+    ("dce-x11-hello --binary=gtk4-hello --seconds=2 --hostfs=1 --env=GSK_RENDERER=cairo,GDK_BACKEND=x11,GSETTINGS_BACKEND=memory,NO_AT_BRIDGE=1,GTK_A11Y=none",
+     "GTK4_DCE_FOUND == True and os.getenv('DISPLAY') is not None", "False"),
 #    ("dce-ccnd-udp-2-nodes", "True", "True"), 
 #    ("dce-ccnd-linear-multiple", "True", "True"),
     ("dce-cradle-simple", "True", "True"),  
