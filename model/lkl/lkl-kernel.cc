@@ -366,24 +366,37 @@ TimerAlloc (void (*fn)(void))
   return timer;
 }
 
+// On the simulator's thread: the kernel re-arms its timer whenever it stops
+// or restarts the tick, and a cancelled event stays in the simulator's queue
+// until its time (far away when the tick stops): remove it.
+void
+TimerRearm (LklTimer *timer, unsigned long delta)
+{
+  Simulator::Remove (timer->event);
+  timer->event = Simulator::Schedule (NanoSeconds (delta), MakeEvent (&TimerExpire, timer));
+}
+
+void
+TimerDelete (LklTimer *timer)
+{
+  Simulator::Remove (timer->event);
+  delete timer;
+}
+
 int
 TimerSetOneshot (void *t, unsigned long delta)
 {
-  LklTimer *timer = (LklTimer *)t;
-  timer->event.Cancel ();
   // Called from the node's own tasks, which may run on threads of their own
   // (PthreadFiberManager): schedule from the simulator's thread. The event
   // keeps the node context.
-  timer->event = Manager ()->ScheduleMain (NanoSeconds (delta), MakeEvent (&TimerExpire, timer));
+  Manager ()->ExecOnMain (MakeEvent (&TimerRearm, (LklTimer *)t, delta));
   return 0;
 }
 
 void
 TimerFree (void *t)
 {
-  LklTimer *timer = (LklTimer *)t;
-  timer->event.Cancel ();
-  delete timer;
+  Manager ()->ExecOnMain (MakeEvent (&TimerDelete, (LklTimer *)t));
 }
 
 /* Memory and misc --------------------------------------------------------- */
