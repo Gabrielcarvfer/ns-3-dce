@@ -779,7 +779,13 @@ DceManager::Clone (Thread *thread)
 void
 DceManager::Yield (void)
 {
-  TaskManager::Current ()->Yield ();
+  // nothing to yield to once the simulation is over (the destructors of the
+  // programs' libraries run when the task managers are disposed of)
+  TaskManager *manager = TaskManager::Current ();
+  if (manager != 0)
+    {
+      manager->Yield ();
+    }
 }
 
 void
@@ -1312,6 +1318,13 @@ DceManager::CopyEnv (char *const envp[], std::vector<std::pair<std::string,std::
 void*
 DceManager::LoadMain (Loader *ld, std::string filename, Process *proc, int &err)
 {
+  std::string root = UtilsGetRealFilePath ("/");
+  proc->exePath = filename;
+  if (filename.compare (0, root.length (), root) == 0)
+    {
+      size_t start = filename.find_first_not_of ('/', root.length ());
+      proc->exePath = "/" + (start == std::string::npos ? "" : filename.substr (start));
+    }
   void *h = ld->Load ("libc-ns3.so", RTLD_GLOBAL);
   void *symbol = 0;
   struct ::Libc *libc = GetLibc ();

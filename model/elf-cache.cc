@@ -199,9 +199,10 @@ ElfCache::EditBuffer (uint8_t *map, uint32_t selfId) const
   NS_ASSERT (pt_load_rw != 0);
   fileInfo.p_vaddr = pt_load_rw->p_vaddr;
   fileInfo.p_memsz = pt_load_rw->p_memsz;
-  if (pt_gnu_relro != 0)
+  // GNU ld starts the data segment with the RELRO part; lld (Chromium) gives
+  // the RELRO part a writable PT_LOAD of its own, before the data segment.
+  if (pt_gnu_relro != 0 && pt_gnu_relro->p_vaddr == pt_load_rw->p_vaddr)
     {
-      NS_ASSERT (pt_gnu_relro->p_vaddr == pt_load_rw->p_vaddr);
       fileInfo.p_vaddr += pt_gnu_relro->p_memsz;
       fileInfo.p_memsz -= pt_gnu_relro->p_memsz;
     }

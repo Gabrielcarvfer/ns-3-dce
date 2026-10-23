@@ -15,6 +15,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include "file-usage.h"
+#include "dce-unistd.h"
+#include <signal.h>
+#include <ucontext.h>
 #include "ns3/global-value.h"
 #include "ns3/uinteger.h"
 
@@ -215,6 +218,42 @@ UtilsSendSignal (Process *process, int signum)
   // Could not find any candidate thread to receive signal.
   // signal pending until a thread unblocks it.
 }
+// Run the handler of a signal, or what SIG_DFL and SIG_IGN stand for.
+static void
+DeliverSignal (const SignalHandler &handler)
+{
+  void (*fn)(int) = (handler.flags & SA_SIGINFO) ? (void (*)(int)) handler.sigaction : handler.handler;
+  if (fn == SIG_IGN)
+    {
+      return;
+    }
+  if (fn == SIG_DFL)
+    {
+      switch (handler.signal)
+        {
+        case SIGCHLD: case SIGURG: case SIGWINCH: case SIGCONT:
+          return;
+        default:
+          // the default action of the others ends the process
+          NS_LOG_DEBUG ("signal " << handler.signal << " ends the process");
+          dce_exit (128 + handler.signal);
+          return;
+        }
+    }
+  if (handler.flags & SA_SIGINFO)
+    {
+      siginfo_t info;
+      ucontext_t ctx;
+      memset (&info, 0, sizeof (info));
+      info.si_signo = handler.signal;
+      handler.sigaction (handler.signal, &info, &ctx);
+    }
+  else
+    {
+      handler.handler (handler.signal);
+    }
+}
+
 void UtilsDoSignal (void)
 {
   Thread *current = Current ();
@@ -241,32 +280,14 @@ void UtilsDoSignal (void)
         {
           NS_LOG_DEBUG ("deliver signal=" << i->signal);
           // the signal is pending so, we try to deliver it.
-          if (i->flags & SA_SIGINFO)
-            {
-              siginfo_t info;
-              ucontext_t ctx;
-              i->sigaction (i->signal, &info, &ctx);
-            }
-          else
-            {
-              i->handler (i->signal);
-            }
+          DeliverSignal (*i);
           sigdelset (&current->pendingSignals, i->signal);
         }
       if (sigismember (&current->process->pendingSignals, i->signal) == 1)
         {
           NS_LOG_DEBUG ("deliver signal=" << i->signal);
           // the signal is pending so, we try to deliver it.
-          if (i->flags & SA_SIGINFO)
-            {
-              siginfo_t info;
-              ucontext_t ctx;
-              i->sigaction (i->signal, &info, &ctx);
-            }
-          else
-            {
-              i->handler (i->signal);
-            }
+          DeliverSignal (*i);
           sigdelset (&current->process->pendingSignals, i->signal);
         }
     }

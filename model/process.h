@@ -163,6 +163,12 @@ struct Process
   DceManager *manager;
   Loader *loader;
   void *mainHandle;
+  // what /proc/self/exe links to: the program, in the node's file system
+  // if it was found there, else on the host (DCE_PATH)
+  std::string exePath;
+  // what dlerror() reports, and whether it has to
+  std::string dlError;
+  bool hasDlError;
   // a signal is ending it (dce_exit_signal)
   bool killedBySignal;
   std::string cwd;

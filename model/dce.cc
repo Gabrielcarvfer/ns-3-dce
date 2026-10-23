@@ -1,6 +1,8 @@
 #include "dce-manager.h"
 #include "process.h"
 #include "utils.h"
+#include <sstream>
+#include <algorithm>
 #include "exec-utils.h"
 #include "dce-errno.h"
 #include "dce-libc-private.h"
@@ -295,8 +297,13 @@ int dce_gettimeofday (struct timeval *tv, struct timezone *tz)
 {
   NS_LOG_FUNCTION (Current () << UtilsGetNodeId ());
   NS_ASSERT (Current () != 0);
-  NS_ASSERT (tz == 0);
   *tv = UtilsTimeToTimeval (UtilsSimulationTimeToTime (Now ()));
+  if (tz != 0)
+    {
+      // obsolete: UTC, no daylight saving time
+      tz->tz_minuteswest = 0;
+      tz->tz_dsttime = 0;
+    }
   return 0;
 }
 int dce_nanosleep (const struct timespec *req, struct timespec *rem)
@@ -1000,6 +1007,18 @@ ssize_t dce_readlink (const char *path, char *buf, size_t bufsize)
   Thread *current = Current ();
   NS_LOG_FUNCTION (current << UtilsGetNodeId ());
   NS_ASSERT (current != 0);
+
+  // the program the process runs (programs find their data files next to it)
+  std::ostringstream ownExe;
+  ownExe << "/proc/" << current->process->pid << "/exe";
+  if (current->process->exePath != ""
+      && (std::string (path) == "/proc/self/exe" || std::string (path) == "/proc/thread-self/exe"
+          || path == ownExe.str ()))
+    {
+      size_t n = std::min (bufsize, current->process->exePath.length ());
+      memcpy (buf, current->process->exePath.c_str (), n);
+      return n;
+    }
 
   std::string fullpath = UtilsGetRealFilePath (path);
 

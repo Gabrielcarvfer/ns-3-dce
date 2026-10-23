@@ -67,28 +67,36 @@ NS_LOG_COMPONENT_DEFINE ("DceFd");
 
 using namespace ns3;
 
+static int dce_open_mode (const char *path, int flags, mode_t mode);
+
 int dce_open64 (const char *path, int flags, ...)
 {
   va_list vl;
   va_start (vl, flags);
-  // hope this trick actually works...
-  int status = dce_open (path, flags, vl);
-  va_end (vl);
-
-  return status;
-}
-
-int dce_open (const char *path, int flags, ...)
-{
-  va_list vl;
-  va_start (vl, flags);
-
   mode_t mode = 0;
   if (flags & O_CREAT)
     {
       mode = va_arg (vl, mode_t);
     }
   va_end (vl);
+  return dce_open_mode (path, flags, mode);
+}
+
+int dce_open (const char *path, int flags, ...)
+{
+  va_list vl;
+  va_start (vl, flags);
+  mode_t mode = 0;
+  if (flags & O_CREAT)
+    {
+      mode = va_arg (vl, mode_t);
+    }
+  va_end (vl);
+  return dce_open_mode (path, flags, mode);
+}
+
+static int dce_open_mode (const char *path, int flags, mode_t mode)
+{
   Thread *current = Current ();
   NS_LOG_FUNCTION (current << UtilsGetNodeId () << path << flags);
   NS_ASSERT (current != 0);
@@ -161,41 +169,32 @@ int dce_openat (int dirfd, const char *pathname, int flags, ...) {
     return dce_open(pathname, flags, mode);
   }
   
-  // If pathname is relative, then it is interpreted relative to the directory 
-  // referred to by the file descriptor dirfd
+  // If pathname is relative, then it is interpreted relative to the directory
+  // referred to by the file descriptor dirfd: a directory of the node's file
+  // system, open on the host.
   Thread *current = Current ();
-  int realFd = getRealFd (dirfd, current);
-
-  struct stat finfo;
-  int error = fstat(realFd, &finfo);
-  if (error)
-  {
-    return -1;
-  }
-
-  // We find the directory referred by dirfd and finally open the dile with dce_open
-  std::stringstream command_cp;    
-  command_cp << "cd files-" << UtilsGetNodeId () << "; find . -inum " << finfo.st_ino;
-
-  const char* cmd = command_cp.str ().c_str ();
-  char buffer[128];
-  std::string ret = "";
-  FILE* pipe = popen(cmd, "r");
-  if (!pipe) throw std::runtime_error("popen() failed!");
-  try {
-    while (fgets(buffer, sizeof buffer, pipe) != NULL) {
-      ret += buffer;
+  int realDirFd = getRealFd (dirfd, current);
+  if (realDirFd < 0)
+    {
+      current->err = EBADF;
+      return -1;
     }
-  } catch (...) {
-    pclose(pipe);
-    throw;
-  }
-  pclose(pipe);
-
-  ret.erase(0,1);
-  ret.erase(ret.length()-1,1);
-  ret = ret + "/" + pathname;
-  return dce_open(ret.c_str(), flags, mode);
+  int fd = UtilsAllocateFd ();
+  if (fd == -1)
+    {
+      current->err = EMFILE;
+      return -1;
+    }
+  int realFd = ::openat (realDirFd, pathname, flags, mode);
+  if (realFd == -1)
+    {
+      current->err = errno;
+      return -1;
+    }
+  UnixFd *unixFd = new UnixFileFd (realFd);
+  unixFd->IncFdCount ();
+  current->process->openFiles[fd] = new FileUsage (fd, unixFd);
+  return fd;
 }
 
 int dce_creat (const char *path, mode_t mode)
@@ -763,8 +762,31 @@ int dce_fcntl (int fd, int cmd, ... /*unsigned long arg*/)
   switch (cmd)
     {
     case F_DUPFD:
+    case F_DUPFD_CLOEXEC:
       {
-        return dce_dup (fd);
+        // the lowest free descriptor of the process from arg on
+        if (current->process->openFiles.find (fd) == current->process->openFiles.end ())
+          {
+            current->err = EBADF;
+            return -1;
+          }
+        int newfd = (int) arg;
+        while (newfd < MAX_FDS
+               && current->process->openFiles.find (newfd) != current->process->openFiles.end ())
+          {
+            newfd++;
+          }
+        if (newfd >= MAX_FDS)
+          {
+            current->err = EMFILE;
+            return -1;
+          }
+        newfd = dce_dup2 (fd, newfd);
+        if (newfd >= 0 && cmd == F_DUPFD_CLOEXEC)
+          {
+            dce_fcntl (newfd, F_SETFD, FD_CLOEXEC);
+          }
+        return newfd;
       }
     }
 

@@ -709,7 +709,7 @@ NATIVE_EXPLICIT (log10, double(*)(double))
 DCE_WITH_ALIAS2 (dlopen, __dlopen)
 DCE (dlsym)
 DCE (dlclose)
-NATIVE (dlerror)
+DCE (dlerror)
 
 // execinfo.h
 NATIVE (backtrace)
