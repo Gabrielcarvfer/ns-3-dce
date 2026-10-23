@@ -8,7 +8,10 @@
 #include "dce-dirent.h"
 #include "dce-epoll.h"
 #include "dce-syslog.h"
+#include "sys/dce-stat.h"
 #include "process.h"
+#include "unix-file-fd.h"
+#include "file-usage.h"
 #include "utils.h"
 #include "ns3/log.h"
 #include <errno.h>
@@ -18,6 +21,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/xattr.h>
+#include <sys/mman.h>
 #include <sched.h>
 
 NS_LOG_COMPONENT_DEFINE ("DceCompat");
@@ -348,11 +352,6 @@ int dce___vsprintf_chk (char *s, int flag, size_t slen, const char *fmt, va_list
 
 // The stack of a DCE thread is not described by a pthread_attr_t; the
 // callers (WAMR) fall back to their defaults.
-int dce_pthread_getattr_np (pthread_t thread, pthread_attr_t *attr)
-{
-  return ENOSYS;
-}
-
 void dce__Exit (int status)
 {
   dce_exit (status);
@@ -589,4 +588,296 @@ int dce_sigtimedwait (const sigset_t *set, siginfo_t *info, const struct timespe
 pid_t dce_vfork (void)
 {
   return Unsupported (ENOSYS);
+}
+
+int dce___xstat64 (int ver, const char *path, struct stat64 *buf)
+{
+  return dce_stat64 (path, buf);
+}
+
+int dce___lxstat64 (int ver, const char *path, struct stat64 *buf)
+{
+  return dce_lstat64 (path, buf);
+}
+
+int dce___fxstat64 (int ver, int fd, struct stat64 *buf)
+{
+  return dce_fstat64 (fd, buf);
+}
+
+int dce___fxstatat64 (int ver, int dirfd, const char *path, struct stat64 *buf, int flags)
+{
+  return dce_fstatat64 (dirfd, path, buf, flags);
+}
+
+int dce_futimens (int fd, const struct timespec times[2])
+{
+  // the time stamps of an open file: the node's files keep the host's
+  return 0;
+}
+
+int dce_posix_fadvise64 (int fd, off64_t offset, off64_t len, int advice)
+{
+  return dce_posix_fadvise (fd, offset, len, advice);
+}
+
+ssize_t dce_sendfile64 (int out_fd, int in_fd, off64_t *offset, size_t count)
+{
+  return dce_sendfile (out_fd, in_fd, (off_t *) offset, count);
+}
+
+int dce_tcdrain (int fd)
+{
+  // the terminals of the simulation write through at once
+  return 0;
+}
+
+int dce_pthread_getname_np (pthread_t thread, char *name, size_t len)
+{
+  // pthread_setname_np() keeps no name
+  if (len < 1)
+    {
+      return ERANGE;
+    }
+  name[0] = 0;
+  return 0;
+}
+
+pid_t dce_gettid (void)
+{
+  // Linux: the main thread's is the pid, the others' are unique too
+  Thread *current = Current ();
+  NS_ASSERT (current != 0);
+  if (current->tid == 0)
+    {
+      return current->process->pid;
+    }
+  return ((current->process->pid & 0x7fff) << 16) | current->tid;
+}
+
+int dce_memfd_create (const char *name, unsigned int flags)
+{
+  // an anonymous file of the host, as a file descriptor of the process
+  Thread *current = Current ();
+  NS_LOG_FUNCTION (current << UtilsGetNodeId () << name << flags);
+  NS_ASSERT (current != 0);
+  int fd = UtilsAllocateFd ();
+  if (fd == -1)
+    {
+      current->err = EMFILE;
+      return -1;
+    }
+  int realFd = ::memfd_create (name, flags);
+  if (realFd == -1)
+    {
+      current->err = errno;
+      return -1;
+    }
+  UnixFd *unixFd = new UnixFileFd (realFd);
+  unixFd->IncFdCount ();
+  current->process->openFiles[fd] = new FileUsage (fd, unixFd);
+  return fd;
+}
+
+static std::string
+ShmPath (const char *name)
+{
+  // POSIX shared memory objects are files in the node's /dev/shm
+  while (*name == '/')
+    {
+      name++;
+    }
+  return std::string ("/dev/shm/") + name;
+}
+
+int dce_shm_open (const char *name, int oflag, mode_t mode)
+{
+  UtilsEnsureAllDirectoriesExist (UtilsGetRealFilePath ("/dev/shm/"));
+  return dce_open (ShmPath (name).c_str (), oflag | O_NOFOLLOW | O_CLOEXEC, mode);
+}
+
+int dce_shm_unlink (const char *name)
+{
+  return dce_unlink (ShmPath (name).c_str ());
+}
+
+// The host directory and path for a path of the node's file system relative
+// to dirfd, as the *at functions take them: false if dirfd is not a
+// directory of the process.
+static bool
+AtPath (int dirfd, const char *path, int &realDirFd, std::string &realPath)
+{
+  Thread *current = Current ();
+  if (dirfd != AT_FDCWD && path[0] != '/')
+    {
+      realDirFd = getRealFd (dirfd, current);
+      realPath = path;
+      if (realDirFd < 0)
+        {
+          current->err = EBADF;
+          return false;
+        }
+      return true;
+    }
+  realDirFd = AT_FDCWD;
+  realPath = UtilsGetRealFilePath (path);
+  return true;
+}
+
+static int
+AtResult (int retval)
+{
+  if (retval == -1)
+    {
+      Current ()->err = errno;
+    }
+  return retval;
+}
+
+int dce_symlink (const char *target, const char *linkpath)
+{
+  return dce_symlinkat (target, AT_FDCWD, linkpath);
+}
+
+int dce_symlinkat (const char *target, int newdirfd, const char *linkpath)
+{
+  // the link's contents are the program's, as it wrote them
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << target << linkpath);
+  int dirFd;
+  std::string path;
+  if (!AtPath (newdirfd, linkpath, dirFd, path))
+    {
+      return -1;
+    }
+  return AtResult (::symlinkat (target, dirFd, path.c_str ()));
+}
+
+int dce_link (const char *oldpath, const char *newpath)
+{
+  return dce_linkat (AT_FDCWD, oldpath, AT_FDCWD, newpath, 0);
+}
+
+int dce_linkat (int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags)
+{
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << oldpath << newpath);
+  int oldDirFd, newDirFd;
+  std::string oldReal, newReal;
+  if (!AtPath (olddirfd, oldpath, oldDirFd, oldReal) || !AtPath (newdirfd, newpath, newDirFd, newReal))
+    {
+      return -1;
+    }
+  return AtResult (::linkat (oldDirFd, oldReal.c_str (), newDirFd, newReal.c_str (), flags));
+}
+
+int dce_chmod (const char *path, mode_t mode)
+{
+  return dce_fchmodat (AT_FDCWD, path, mode, 0);
+}
+
+int dce_fchmodat (int dirfd, const char *path, mode_t mode, int flags)
+{
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << path << mode);
+  int dirFd;
+  std::string real;
+  if (!AtPath (dirfd, path, dirFd, real))
+    {
+      return -1;
+    }
+  return AtResult (::fchmodat (dirFd, real.c_str (), mode, flags));
+}
+
+int dce_fchownat (int dirfd, const char *path, uid_t owner, gid_t group, int flags)
+{
+  // the users of the simulation are not the host's: the file must exist
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << path << owner << group);
+  int dirFd;
+  std::string real;
+  if (!AtPath (dirfd, path, dirFd, real))
+    {
+      return -1;
+    }
+  struct stat st;
+  return AtResult (::fstatat (dirFd, real.c_str (), &st, flags & AT_SYMLINK_NOFOLLOW));
+}
+
+int dce_renameat (int olddirfd, const char *oldpath, int newdirfd, const char *newpath)
+{
+  return dce_renameat2 (olddirfd, oldpath, newdirfd, newpath, 0);
+}
+
+int dce_renameat2 (int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags)
+{
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << oldpath << newpath << flags);
+  int oldDirFd, newDirFd;
+  std::string oldReal, newReal;
+  if (!AtPath (olddirfd, oldpath, oldDirFd, oldReal) || !AtPath (newdirfd, newpath, newDirFd, newReal))
+    {
+      return -1;
+    }
+  return AtResult (::renameat2 (oldDirFd, oldReal.c_str (), newDirFd, newReal.c_str (), flags));
+}
+
+int dce_mkfifo (const char *path, mode_t mode)
+{
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << path << mode);
+  return AtResult (::mkfifo (UtilsGetRealFilePath (path).c_str (), mode));
+}
+
+int dce_mknod (const char *path, mode_t mode, dev_t dev)
+{
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << path << mode);
+  return AtResult (::mknod (UtilsGetRealFilePath (path).c_str (), mode, dev));
+}
+
+int dce_lutimes (const char *path, const struct timeval tv[2])
+{
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << path);
+  return AtResult (::lutimes (UtilsGetRealFilePath (path).c_str (), tv));
+}
+
+char *dce_mkdtemp (char *temp)
+{
+  // the host makes the name in the node's directory; give it back
+  NS_LOG_FUNCTION (Current () << UtilsGetNodeId () << temp);
+  std::string real = UtilsGetRealFilePath (temp);
+  size_t length = strlen (temp);
+  if (length < 6 || real.length () < 6)
+    {
+      Current ()->err = EINVAL;
+      return 0;
+    }
+  std::vector<char> buffer (real.begin (), real.end ());
+  buffer.push_back (0);
+  if (::mkdtemp (buffer.data ()) == 0)
+    {
+      Current ()->err = errno;
+      return 0;
+    }
+  memcpy (temp + length - 6, buffer.data () + real.length () - 6, 6);
+  return temp;
+}
+
+int dce_mkostemp (char *temp, int flags)
+{
+  return dce_mkostemp64 (temp, flags);
+}
+
+int dce_getrlimit (__rlimit_resource_t resource, struct rlimit *rlim)
+{
+  return AtResult (::getrlimit (resource, rlim));
+}
+
+int dce_getrlimit64 (__rlimit_resource_t resource, struct rlimit64 *rlim)
+{
+  return AtResult (::getrlimit64 (resource, rlim));
+}
+
+int dce_setrlimit (__rlimit_resource_t resource, const struct rlimit *rlim)
+{
+  return AtResult (::setrlimit (resource, rlim));
+}
+
+int dce_setrlimit64 (__rlimit_resource_t resource, const struct rlimit64 *rlim)
+{
+  return AtResult (::setrlimit64 (resource, rlim));
 }

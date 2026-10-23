@@ -450,3 +450,20 @@ int dce_sigprocmask (int how, const sigset_t *restrict set,
   return 0;
 }
 #endif
+
+int dce_pthread_getattr_np (pthread_t thread, pthread_attr_t *attr)
+{
+  // the stack of the thread's task (garbage collectors scan it)
+  Thread *current = Current ();
+  NS_ASSERT (current != 0);
+  Thread *target = current->process->manager->SearchThread (PthreadToPid (thread), PthreadToTid (thread));
+  TaskManager *manager = TaskManager::Current ();
+  void *bottom = target != 0 ? manager->GetStackBottom (target->task) : 0;
+  if (bottom == 0)
+    {
+      return ENOSYS;
+    }
+  pthread_attr_init (attr);
+  pthread_attr_setstack (attr, bottom, manager->GetStackSize (target->task));
+  return 0;
+}

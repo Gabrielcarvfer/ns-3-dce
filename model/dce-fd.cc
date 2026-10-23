@@ -1030,6 +1030,17 @@ int dce_fsync (int fd)
   OPENED_FD_METHOD (int, Fsync ())
 }
 
+// fcntl64 is what glibc's fcntl() resolves to when _FILE_OFFSET_BITS=64;
+// on 64-bit targets it is identical to fcntl.
+int dce_fcntl64 (int fd, int cmd, ...)
+{
+  va_list vl;
+  va_start (vl, cmd);
+  unsigned long arg = va_arg (vl, unsigned long);
+  va_end (vl);
+  return dce_fcntl (fd, cmd, arg);
+}
+
 // Fortified read() of glibc, used by libraries built with _FORTIFY_SOURCE.
 ssize_t dce___read_chk (int fd, void *buf, size_t nbytes, size_t buflen)
 {

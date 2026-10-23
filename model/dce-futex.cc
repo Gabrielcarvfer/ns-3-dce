@@ -1,5 +1,7 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 #include "dce-futex.h"
+#include "dce-compat.h"
+#include "dce-unistd.h"
 #include "process.h"
 #include "dce-manager.h"
 #include "utils.h"
@@ -222,6 +224,18 @@ long dce_syscall (long number, ...)
     {
       return DoFutex ((uint32_t *)a[0], (int)a[1], (uint32_t)a[2],
                       (const struct timespec *)a[3], (uint32_t *)a[4], (uint32_t)a[5]);
+    }
+  // system calls about the process's threads and file descriptors
+  switch (number)
+    {
+    case SYS_gettid:
+      return dce_gettid ();
+    case SYS_getpid:
+      return dce_getpid ();
+    case SYS_memfd_create:
+      return dce_memfd_create ((const char *)a[0], (unsigned int)a[1]);
+    case SYS_close:
+      return dce_close ((int)a[0]);
     }
   long r = ::syscall (number, a[0], a[1], a[2], a[3], a[4], a[5]);
   if (r == -1)

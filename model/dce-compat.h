@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <dirent.h>
 #include <spawn.h>
 #include <stdio.h>
@@ -117,6 +118,49 @@ int dce_sched_getscheduler (pid_t pid);
 int dce_sched_setscheduler (pid_t pid, int policy, const struct sched_param *param);
 int dce_sigtimedwait (const sigset_t *set, siginfo_t *info, const struct timespec *timeout);
 pid_t dce_vfork (void);
+
+// The stat ABI of programs built against glibc < 2.33 (Chrome): glibc keeps
+// these entry points for them, but no longer declares them.
+int __xstat64 (int ver, const char *path, struct stat64 *buf);
+int __lxstat64 (int ver, const char *path, struct stat64 *buf);
+int __fxstat64 (int ver, int fd, struct stat64 *buf);
+int __fxstatat64 (int ver, int dirfd, const char *path, struct stat64 *buf, int flags);
+int dce___xstat64 (int ver, const char *path, struct stat64 *buf);
+int dce___lxstat64 (int ver, const char *path, struct stat64 *buf);
+int dce___fxstat64 (int ver, int fd, struct stat64 *buf);
+int dce___fxstatat64 (int ver, int dirfd, const char *path, struct stat64 *buf, int flags);
+int dce_futimens (int fd, const struct timespec times[2]);
+int dce_posix_fadvise64 (int fd, off64_t offset, off64_t len, int advice);
+ssize_t dce_sendfile64 (int out_fd, int in_fd, off64_t *offset, size_t count);
+int dce_tcdrain (int fd);
+int dce_pthread_getname_np (pthread_t thread, char *name, size_t len);
+
+pid_t dce_gettid (void);
+int dce_memfd_create (const char *name, unsigned int flags);
+int dce_shm_open (const char *name, int oflag, mode_t mode);
+int dce_shm_unlink (const char *name);
+
+// path functions: the paths are in the node's file system
+int dce_symlink (const char *target, const char *linkpath);
+int dce_symlinkat (const char *target, int newdirfd, const char *linkpath);
+int dce_link (const char *oldpath, const char *newpath);
+int dce_linkat (int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
+int dce_chmod (const char *path, mode_t mode);
+int dce_fchmodat (int dirfd, const char *path, mode_t mode, int flags);
+int dce_fchownat (int dirfd, const char *path, uid_t owner, gid_t group, int flags);
+int dce_renameat (int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
+int dce_renameat2 (int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags);
+int dce_mkfifo (const char *path, mode_t mode);
+int dce_mknod (const char *path, mode_t mode, dev_t dev);
+int dce_lutimes (const char *path, const struct timeval tv[2]);
+char *dce_mkdtemp (char *temp);
+int dce_mkostemp (char *temp, int flags);
+
+// the host's, with errno
+int dce_getrlimit (__rlimit_resource_t resource, struct rlimit *rlim);
+int dce_getrlimit64 (__rlimit_resource_t resource, struct rlimit64 *rlim);
+int dce_setrlimit (__rlimit_resource_t resource, const struct rlimit *rlim);
+int dce_setrlimit64 (__rlimit_resource_t resource, const struct rlimit64 *rlim);
 
 #ifdef __cplusplus
 }
