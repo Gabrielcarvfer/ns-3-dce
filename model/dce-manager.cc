@@ -18,6 +18,8 @@
  * Author: Mathieu Lacage <mathieu.lacage@sophia.inria.fr>
  */
 #include "dce-manager.h"
+#include <ucontext.h>
+#include <sys/auxv.h>
 #include "process.h"
 #include "task-manager.h"
 #include "libc-dce.h"
@@ -285,10 +287,104 @@ int (*DceManager::PrepareDoStartProcess (Thread * current)) (int, char **, char 
 
   return main;
 }
+// A program which crashes (SIGSEGV, SIGBUS, SIGILL, SIGFPE in its own code
+// or in the libraries it uses) ends, as the kernel would end it, and the
+// simulation goes on: the signal handler resumes its task in
+// GuestCrashed(), which ends its process. A fault in the simulator's own
+// code (ns-3, DCE, the simulation's executable) and a stack overflow still
+// end the simulation.
+static struct sigaction g_previousFaultActions[NSIG];
+static const int g_faultSignals[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE };
+static void *g_simulatorExecutable = 0;
+
+static void
+GuestCrashed (int signal)
+{
+  Thread *current = Current ();
+  if (current->process->killedBySignal)
+    {
+      // another fault while the process ends: this task only stops
+      TaskManager::Current ()->Exit ();
+      return;
+    }
+  current->process->killedBySignal = true;
+  std::cerr << current->process->originalArgv[0] << " (pid " << current->process->pid
+            << ", tid " << current->tid << ", node " << current->process->nodeId
+            << ") killed by signal " << signal << " at t=" << Simulator::Now ().GetSeconds ()
+            << "s" << std::endl;
+  dce_exit_signal (signal);
+}
+
+static bool
+IsSimulatorCode (void *pc)
+{
+  Dl_info info;
+  if (dladdr (pc, &info) == 0 || info.dli_fname == 0)
+    {
+      return false; // generated code (a JavaScript engine's)
+    }
+  if (info.dli_fbase == g_simulatorExecutable)
+    {
+      return true;
+    }
+  return strstr (info.dli_fname, "libns3") != 0;
+}
+
+static void
+GuestFaultHandler (int signal, siginfo_t *info, void *context)
+{
+  ucontext_t *uc = (ucontext_t *) context;
+  void *pc = (void *) uc->uc_mcontext.gregs[REG_RIP];
+  uintptr_t sp = (uintptr_t) uc->uc_mcontext.gregs[REG_RSP];
+  uintptr_t address = (uintptr_t) info->si_addr;
+  bool stackOverflow = signal == SIGSEGV && address < sp && sp - address < 64 * 1024;
+  TaskManager *manager = TaskManager::Current ();
+  if (manager != 0 && manager->CurrentTask () != 0 && !stackOverflow && !IsSimulatorCode (pc))
+    {
+      // continue on the task's stack, as if GuestCrashed (signal) had been
+      // called, below the red zone of the function that faulted
+      sp = ((sp - 256) & ~(uintptr_t) 15) - 8;
+      uc->uc_mcontext.gregs[REG_RSP] = (greg_t) sp;
+      uc->uc_mcontext.gregs[REG_RIP] = (greg_t) &GuestCrashed;
+      uc->uc_mcontext.gregs[REG_RDI] = signal;
+      return;
+    }
+  // the previous handler (UcontextFiberManager's stack overflow message), or
+  // the default action, when the faulting instruction runs again
+  sigaction (signal, &g_previousFaultActions[signal], 0);
+}
+
+static void
+InstallGuestFaultHandler (void)
+{
+  static bool installed = false;
+  if (installed)
+    {
+      return;
+    }
+  installed = true;
+  Dl_info info;
+  if (dladdr ((void *) getauxval (AT_PHDR), &info) != 0)
+    {
+      g_simulatorExecutable = info.dli_fbase;
+    }
+  struct sigaction action;
+  memset (&action, 0, sizeof (action));
+  action.sa_sigaction = &GuestFaultHandler;
+  action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+  sigemptyset (&action.sa_mask);
+  for (size_t i = 0; i < sizeof (g_faultSignals) / sizeof (g_faultSignals[0]); i++)
+    {
+      sigaction (g_faultSignals[i], &action, &g_previousFaultActions[g_faultSignals[i]]);
+    }
+}
+
 void
 DceManager::DoStartProcess (void *context)
 {
   Thread *current = (Thread *)context;
+  // after UcontextFiberManager's own SIGSEGV handler, which this one chains to
+  InstallGuestFaultHandler ();
   int (*main)(int, char **, char **) = PrepareDoStartProcess (current);
   int retval = 127;
 

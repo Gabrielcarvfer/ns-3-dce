@@ -94,6 +94,31 @@ void dce_exit (int status)
   TaskManager::Current ()->Exit ();
 }
 
+void dce_exit_signal (int signal)
+{
+  // what the kernel does when a signal kills a process: no atexit handlers
+  // nor destructors, no flush of its stdio buffers (it may have crashed in
+  // them)
+  Thread *current = Current ();
+  NS_LOG_FUNCTION (current << UtilsGetNodeId () << signal);
+  NS_ASSERT (current != 0);
+  current->process->timing.exitValue = __W_EXITCODE (0, signal);
+  current->process->timing.ns3End = Now ().GetNanoSeconds ();
+  current->process->timing.realEnd = time (0);
+
+  current->task->SetSwitchNotifier (0, 0);
+  current->process->loader->UnloadAll ();
+
+  std::ostringstream oss;
+  oss << "Killed by signal " << signal << " (" << strsignal (signal) << ")";
+  std::string line = oss.str ();
+  DceManager::AppendStatusFile (current->process->pid, current->process->nodeId, line);
+  DceManager::AppendProcFile (current->process);
+
+  current->process->manager->DeleteProcess (current->process, DceManager::PEC_EXIT);
+  TaskManager::Current ()->Exit ();
+}
+
 struct PthreadStartContext
 {
   void *(*start_routine)(void*);

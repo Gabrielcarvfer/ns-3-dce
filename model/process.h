@@ -163,6 +163,8 @@ struct Process
   DceManager *manager;
   Loader *loader;
   void *mainHandle;
+  // a signal is ending it (dce_exit_signal)
+  bool killedBySignal;
   std::string cwd;
   KingsleyAlloc *alloc;
   Callback<void,uint16_t,int> finished;

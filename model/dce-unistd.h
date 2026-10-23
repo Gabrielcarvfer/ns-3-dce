@@ -16,6 +16,8 @@ ssize_t dce_writev (int fd, const struct iovec *iov, int iovcnt);
 ssize_t dce_read (int fd, void *buf, size_t count);
 ssize_t dce_readv (int fd, const struct iovec *iov, int iovcnt);
 void dce_exit (int status);
+// the end of a process killed by a signal: no atexit handlers, no stdio
+void dce_exit_signal (int signal);
 unsigned int dce_sleep (unsigned int seconds);
 int dce_usleep (useconds_t usec);
 pid_t dce_getpid (void);
