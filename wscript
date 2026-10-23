@@ -558,6 +558,7 @@ def build_a_script(bld, name, needed = [], **kw):
     external = [i for i in needed if not i == name]
     if not ns3waf.modules_found(bld, external):
     	return
+    kw = dce_kw(**kw)
     kw['use'] = kw.get('use', []) + ns3waf.modules_uselib(bld, needed)
     if 'features' not in kw:
         kw['features'] = 'cxx cxxprogram'
