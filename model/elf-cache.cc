@@ -207,6 +207,9 @@ ElfCache::EditBuffer (uint8_t *map, uint32_t selfId) const
       fileInfo.p_memsz -= pt_gnu_relro->p_memsz;
     }
 
+  // before the DT_NEEDED names change
+  UnversionOverridenReferences (map, header);
+
   // first, Patch the DT_NEEDED, and, DT_SONAME entries
   // and save the DT_INIT entry
   long dt_strtab = GetDtStrTab (dyn, base_address);
@@ -258,6 +261,84 @@ ElfCache::EditBuffer (uint8_t *map, uint32_t selfId) const
   DemoteUniqueSymbols (map, header);
 
   return fileInfo;
+}
+
+void
+ElfCache::UnversionOverridenReferences (uint8_t *map, ElfW (Ehdr) *header) const
+{
+  // A program refers to the symbols of the libraries DCE replaces (libc,
+  // libpthread, ...) with the version of glibc it was built against, and
+  // DCE's replacements define each symbol with one version only, the
+  // current one: a program built against an older glibc (Chrome refers to
+  // pthread_create@GLIBC_2.2.5) would not bind to them, but to the host's
+  // glibc. Make these references unversioned, which bind to DCE's
+  // definition, and their version requirements weak.
+  if (header->e_shoff == 0 || header->e_shnum == 0)
+    {
+      return;
+    }
+  ElfW (Shdr) *shdr = (ElfW (Shdr) *)(map + header->e_shoff);
+  ElfW (Half) *versym = 0;
+  uint32_t nversym = 0;
+  std::vector<bool> overriden;
+  for (uint32_t i = 0; i < header->e_shnum; i++)
+    {
+      if (shdr[i].sh_type == SHT_GNU_versym)
+        {
+          versym = (ElfW (Half) *)(map + shdr[i].sh_offset);
+          nversym = shdr[i].sh_size / sizeof (ElfW (Half));
+        }
+      else if (shdr[i].sh_type == SHT_GNU_verneed)
+        {
+          const char *strtab = (const char *)(map + shdr[shdr[i].sh_link].sh_offset);
+          uint8_t *cur = map + shdr[i].sh_offset;
+          for (uint32_t n = 0; n < shdr[i].sh_info; n++)
+            {
+              ElfW (Verneed) *need = (ElfW (Verneed) *) cur;
+              std::string file = strtab + need->vn_file;
+              // and the dynamic loader's __libc_stack_end, which DCE's libc
+              // defines (the top of the process's main thread's stack)
+              bool replaced = file == "ld-linux-x86-64.so.2";
+              for (std::vector<struct Overriden>::const_iterator o = m_overriden.begin ();
+                   o != m_overriden.end (); ++o)
+                {
+                  replaced = replaced || o->from == file;
+                }
+              uint8_t *auxCur = cur + need->vn_aux;
+              for (uint32_t a = 0; a < need->vn_cnt; a++)
+                {
+                  ElfW (Vernaux) *aux = (ElfW (Vernaux) *) auxCur;
+                  if (replaced)
+                    {
+                      aux->vna_flags |= VER_FLG_WEAK;
+                      if (aux->vna_other >= overriden.size ())
+                        {
+                          overriden.resize (aux->vna_other + 1, false);
+                        }
+                      overriden[aux->vna_other] = true;
+                    }
+                  if (aux->vna_next == 0)
+                    {
+                      break;
+                    }
+                  auxCur += aux->vna_next;
+                }
+              if (need->vn_next == 0)
+                {
+                  break;
+                }
+              cur += need->vn_next;
+            }
+        }
+    }
+  for (uint32_t i = 0; versym != 0 && i < nversym; i++)
+    {
+      ElfW (Half) index = versym[i] & 0x7fff;
+      if (index < overriden.size () && overriden[index])
+        {
+          versym[i] = VER_NDX_GLOBAL;
+        }
+    }
 }
 
 void

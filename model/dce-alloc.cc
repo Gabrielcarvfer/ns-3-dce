@@ -7,6 +7,7 @@
 #include "kingsley-alloc.h"
 #include "ns3/log.h"
 #include <string.h>
+#include <algorithm>
 
 NS_LOG_COMPONENT_DEFINE ("DceAlloc");
 
@@ -50,9 +51,27 @@ Header (void *ptr, uint8_t **raw, size_t *total)
   memcpy (total, (uint8_t *)ptr - sizeof (size_t), sizeof (*total));
 }
 
+// With a program which brings its own allocator, blocks DCE allocated before
+// it was there (or for DCE itself) still return to DCE's.
+static ProgramAllocator *
+ProgramAlloc (Thread *current)
+{
+  return current->process->programAllocator;
+}
+
+static bool
+OwnedByDce (Thread *current, void *ptr)
+{
+  return current->process->alloc->Owns (ptr);
+}
+
 void * dce_calloc (size_t nmemb, size_t size)
 {
   GET_CURRENT (nmemb << size);
+  if (ProgramAlloc (current) != 0)
+    {
+      return ProgramAlloc (current)->calloc (nmemb, size);
+    }
   if (size != 0 && nmemb > SIZE_MAX / size)
     {
       current->err = ENOMEM;
@@ -71,6 +90,10 @@ void * dce_calloc (size_t nmemb, size_t size)
 void * dce_malloc (size_t size)
 {
   GET_CURRENT (size);
+  if (ProgramAlloc (current) != 0)
+    {
+      return ProgramAlloc (current)->malloc (size);
+    }
   void *ptr = Allocate (current, size, 16);
   if (ptr == 0)
     {
@@ -85,6 +108,12 @@ size_t dce_malloc_usable_size (void *ptr)
     {
       return 0;
     }
+  Thread *current = Current ();
+  if (ProgramAlloc (current) != 0 && !OwnedByDce (current, ptr))
+    {
+      return ProgramAlloc (current)->malloc_usable_size != 0
+        ? ProgramAlloc (current)->malloc_usable_size (ptr) : 0;
+    }
   uint8_t *raw;
   size_t total;
   Header (ptr, &raw, &total);
@@ -96,6 +125,11 @@ void dce_free (void *ptr)
   GET_CURRENT (ptr);
   if (ptr == 0)
     {
+      return;
+    }
+  if (ProgramAlloc (current) != 0 && !OwnedByDce (current, ptr))
+    {
+      ProgramAlloc (current)->free (ptr);
       return;
     }
   uint8_t *raw;
@@ -115,6 +149,21 @@ void * dce_realloc (void *ptr, size_t size)
     {
       dce_free (ptr);
       return 0;
+    }
+  if (ProgramAlloc (current) != 0)
+    {
+      if (!OwnedByDce (current, ptr))
+        {
+          return ProgramAlloc (current)->realloc (ptr, size);
+        }
+      // a block of DCE's moves to the program's allocator
+      void *moved = ProgramAlloc (current)->malloc (size);
+      if (moved != 0)
+        {
+          memcpy (moved, ptr, std::min (size, dce_malloc_usable_size (ptr)));
+          dce_free (ptr);
+        }
+      return moved;
     }
   size_t usable = dce_malloc_usable_size (ptr);
   if (size <= usable)
@@ -138,6 +187,10 @@ int dce_posix_memalign (void **memptr, size_t alignment, size_t size)
   if (memptr == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
     {
       return EINVAL;
+    }
+  if (ProgramAlloc (current) != 0 && ProgramAlloc (current)->posix_memalign != 0)
+    {
+      return ProgramAlloc (current)->posix_memalign (memptr, alignment, size);
     }
   void *ptr = Allocate (current, size, alignment);
   if (ptr == 0)

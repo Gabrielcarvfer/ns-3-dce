@@ -44,6 +44,15 @@ struct SimTask;
 namespace ns3 {
 
 struct Process;
+struct ProgramAllocator
+{
+  void * (*malloc)(size_t);
+  void (*free)(void *);
+  void * (*calloc)(size_t, size_t);
+  void * (*realloc)(void *, size_t);
+  int (*posix_memalign)(void **, size_t, size_t);
+  size_t (*malloc_usable_size)(void *);
+};
 struct Thread;
 class DceManager;
 class UnixFd;
@@ -173,6 +182,12 @@ struct Process
   bool hasDlError;
   // a signal is ending it (dce_exit_signal)
   bool killedBySignal;
+  // the initial value of the thread local variables of a program loaded
+  // from an executable, below the thread pointer (DceExecutableTlsImage)
+  std::vector<uint8_t> executableTls;
+  // the program's own malloc() and friends (Chrome's PartitionAlloc), which
+  // the libraries it uses must use too, as they would without DCE
+  struct ProgramAllocator *programAllocator;
   std::string cwd;
   KingsleyAlloc *alloc;
   Callback<void,uint16_t,int> finished;

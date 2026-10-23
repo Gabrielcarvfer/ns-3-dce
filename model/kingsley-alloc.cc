@@ -153,6 +153,20 @@ KingsleyAlloc::MmapFree (uint8_t *buffer, uint32_t size)
   status = ::munmap (buffer, size);
   NS_ASSERT_MSG (status == 0, "Unable to release mmaped buffer");
 }
+bool
+KingsleyAlloc::Owns (const void *buffer) const
+{
+  const uint8_t *p = (const uint8_t *) buffer;
+  for (std::list<struct MmapChunk>::const_iterator i = m_chunks.begin (); i != m_chunks.end (); ++i)
+    {
+      if (p >= i->mmap->buffer && p < i->mmap->buffer + i->mmap->size)
+        {
+          return true;
+        }
+    }
+  return false;
+}
+
 void
 KingsleyAlloc::MmapAlloc (uint32_t size, bool large)
 {

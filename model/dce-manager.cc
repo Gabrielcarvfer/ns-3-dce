@@ -18,6 +18,7 @@
  * Author: Mathieu Lacage <mathieu.lacage@sophia.inria.fr>
  */
 #include "dce-manager.h"
+#include "dce-executable.h"
 #include <ucontext.h>
 #include <sys/auxv.h>
 #include "process.h"
@@ -1412,6 +1413,16 @@ DceManager::LoadMain (Loader *ld, std::string filename, Process *proc, int &err)
           libdl_setup = (void (*) (const struct Libc *))(symbol);
           libdl_setup (libc);
 
+          // A program loaded from an executable addresses its own thread
+          // local variables at fixed offsets below the thread pointer: with
+          // per-fiber TLS, give them their initial values in this thread
+          // before the program's constructors run.
+          if (TaskManager::Current ()->HasPerFiberTls ()
+              && DceExecutableTlsImage (filename, proc->executableTls))
+            {
+              DceExecutableTlsInit (proc->executableTls);
+            }
+
           // finally, call into 'main'.
           h = ld->Load (filename, RTLD_GLOBAL);
 
@@ -1423,7 +1434,14 @@ DceManager::LoadMain (Loader *ld, std::string filename, Process *proc, int &err)
           else
             {
               proc->mainHandle = h;
+              DceExecutableTlsRelocate (h, proc->executableTls);
+              proc->programAllocator = DceExecutableAllocator (h);
               symbol = ld->Lookup (h, "main");
+              if (symbol == 0)
+                {
+                  // an executable which does not export it
+                  symbol = DceExecutableMain (h);
+                }
               err = (0 != symbol) ? 0 : ENOEXEC;
             }
         }

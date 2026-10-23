@@ -3,6 +3,8 @@
 #include "dce-unistd.h"
 #include "dce-manager.h"
 #include "process.h"
+#include "dce-executable.h"
+#include "dce-compat.h"
 #include "utils.h"
 #include "dce-cxa.h"
 #include "dce-stdio.h"
@@ -130,6 +132,10 @@ static void pthread_do_start (void *context)
   struct PthreadStartContext *pctx = (struct PthreadStartContext *)context;
   struct PthreadStartContext ctx = *pctx;
   delete pctx;
+  if (!Current ()->process->executableTls.empty ())
+    {
+      DceExecutableTlsInit (Current ()->process->executableTls);
+    }
   void *retval = ctx.start_routine (ctx.arg);
   dce_pthread_exit (retval);
 }

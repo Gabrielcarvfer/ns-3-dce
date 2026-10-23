@@ -20,6 +20,8 @@ public:
   void SwitchTo (void);
   uint8_t * Malloc (uint32_t size);
   void Free (uint8_t *buffer, uint32_t size);
+  // true if buffer is in memory this allocator handed out
+  bool Owns (const void *buffer) const;
   uint8_t * Realloc (uint8_t *oldBuffer, uint32_t oldSize, uint32_t newSize);
   // Call me only from my context
   void Dispose ();

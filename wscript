@@ -660,6 +660,7 @@ def build(bld):
         'model/dce-alloc.cc',
         'model/fiber-manager.cc',
         'model/ucontext-fiber-manager.cc',
+        'model/dce-executable.cc',
         'model/pthread-fiber-manager.cc',
         'model/task-manager.cc',
         'model/task-scheduler.cc',
