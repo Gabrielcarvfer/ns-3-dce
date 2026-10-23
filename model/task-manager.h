@@ -162,6 +162,10 @@ public:
    */
   void SetTaskEndNotifier (void (*fn)(Task *task, bool running, void *context), void *context);
   uint32_t GetStackSize (Task *task) const;
+  /**
+   * \returns the lowest address of the task's stack, 0 if unknown.
+   */
+  void *GetStackBottom (Task *task) const;
 
   /**
    * NS-3 prohibits to post event from a thread which is not the main thread,
@@ -173,6 +177,10 @@ public:
 
   bool GetNoSignal ();
 
+  /**
+   * \returns true if every task has thread local storage of its own.
+   */
+  bool HasPerFiberTls (void) const;
   /**
    * \returns true if Clone () can clone a task (fork ()).
    */
@@ -193,6 +201,8 @@ private:
   virtual void DoDispose (void);
   void Schedule (void);
   void SetFiberManagerType (enum FiberManagerType type);
+  void SetPerFiberTls (bool enable);
+  bool GetPerFiberTls (void) const;
   void GarbageCollectDeadTasks (void);
   void EndWait (Task *task);
   static void Trampoline (void *context);

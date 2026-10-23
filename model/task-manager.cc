@@ -6,6 +6,7 @@
 #include "ns3/log.h"
 #include "ns3/uinteger.h"
 #include "ns3/enum.h"
+#include "ns3/boolean.h"
 #include "ns3/simulator.h"
 #include "ns3/node.h"
 #include "ns3/node-list.h"
@@ -95,6 +96,14 @@ TaskManager::GetTypeId (void)
                    MakeEnumAccessor<FiberManagerType>  (&TaskManager::SetFiberManagerType),
                    MakeEnumChecker (PTHREAD_FIBER_MANAGER, "PthreadFiberManager",
                                     UCONTEXT_FIBER_MANAGER, "UcontextFiberManager"))
+    .AddAttribute ("PerFiberTls",
+                   "Give every task thread local storage of its own (UcontextFiberManager, "
+                   "x86_64): programs whose threads keep state in thread local variables "
+                   "need it. Otherwise all the tasks share the simulator thread's.",
+                   TypeId::ATTR_CONSTRUCT | TypeId::ATTR_GET,
+                   BooleanValue (false),
+                   MakeBooleanAccessor (&TaskManager::SetPerFiberTls, &TaskManager::GetPerFiberTls),
+                   MakeBooleanChecker ())
   ;
   return tid;
 }
@@ -562,10 +571,32 @@ TaskManager::SetFiberManagerType (enum FiberManagerType type)
   m_mainFiber = m_fiberManager->CreateFromCaller ();
 }
 
+void
+TaskManager::SetPerFiberTls (bool enable)
+{
+  NS_LOG_FUNCTION (this << enable);
+  if (enable && !m_fiberManager->EnablePerFiberTls ())
+    {
+      NS_FATAL_ERROR ("This FiberManagerType cannot give the tasks thread local storage of their own");
+    }
+}
+
+bool
+TaskManager::GetPerFiberTls (void) const
+{
+  return HasPerFiberTls ();
+}
+
 bool
 TaskManager::CanClone (void) const
 {
   return m_fiberManager != 0 && m_fiberManager->CanClone ();
+}
+
+bool
+TaskManager::HasPerFiberTls (void) const
+{
+  return m_fiberManager != 0 && m_fiberManager->HasPerFiberTls ();
 }
 
 
@@ -587,6 +618,11 @@ uint32_t
 TaskManager::GetStackSize (Task *task) const
 {
   return m_fiberManager->GetStackSize (task->m_fiber);
+}
+void *
+TaskManager::GetStackBottom (Task *task) const
+{
+  return m_fiberManager->GetStackBottom (task->m_fiber);
 }
 void
 TaskManager::ExecOnMain (EventImpl *e)
