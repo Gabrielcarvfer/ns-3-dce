@@ -3,7 +3,9 @@
 # Build the programs DCE's kernel-stack tests and examples run (the kernel
 # itself is LKL, built by utils/build_lkl.sh):
 #   - DCE-compatible (PIE) builds of ip, iperf, thttpd, wget, ping/ping6,
-#     the quagga routing daemons and a minimal ffmpeg (dce-wifi-video)
+#     the quagga routing daemons, a minimal ffmpeg (dce-wifi-video) and,
+#     when their development packages are installed, the dillo (FLTK) and
+#     Northstar (GTK4, JavaScript) web browsers (dce-browser)
 #   - the ns-3-dce-quagga module sources, patched for current ns-3
 #
 # Usage: ./utils/build_kernel_deps.sh [deps_dir]
@@ -33,6 +35,11 @@ WGET_VERSION="1.15"
 QUAGGA_VERSION="0.99.20"
 # 5.1 is the last ffmpeg whose command line tool works without threads.
 FFMPEG_REV="n5.1.6"
+DILLO_REV="v3.1.1"
+CURL_VERSION="8.5.0"
+NORTHSTAR_REPO="https://github.com/nordstjernen-web/northstar-browser.git"
+# main, with Media Source Extensions video and audio streaming (PR #18)
+NORTHSTAR_REV="488121e30687857eaa6ee22af0e8b14fc2030b7a"
 
 # Old C code: keep building with GCC >= 10 (-fcommon) and GCC >= 14, which
 # turned these warnings into errors. -U_FORTIFY_SOURCE: DCE does not provide
@@ -49,7 +56,11 @@ fetch_git () {
     if [ ! -d "${SRC}/$3" ]; then
         if ! git -c advice.detachedHead=false clone -q --depth 1 --branch "$2" "$1" "${SRC}/$3" 2> /dev/null; then
             git clone -q "$1" "${SRC}/$3"
-            git -C "${SRC}/$3" -c advice.detachedHead=false checkout -q "$2"
+            # a commit no branch has any more (a merged pull request): by hash
+            git -C "${SRC}/$3" -c advice.detachedHead=false checkout -q "$2" 2> /dev/null || {
+                git -C "${SRC}/$3" fetch -q origin "$2"
+                git -C "${SRC}/$3" -c advice.detachedHead=false checkout -q "$2"
+            }
         fi
     fi
     # A source tree from an earlier run must be at the same revision.
@@ -189,6 +200,99 @@ fetch_git https://github.com/FFmpeg/FFmpeg.git "${FFMPEG_REV}" ffmpeg
     make -j"${JOBS}" ffmpeg > /dev/null 2>&1
 )
 cp "${SRC}/ffmpeg/ffmpeg" "${BIN_DCE}/"
+# The same binary runs natively: make the MPEG-1 program stream version of
+# the video sample that Northstar's player decodes (dce-browser's video page).
+"${BIN_DCE}/ffmpeg" -nostdin -hide_banner -loglevel error -y \
+    -i "${DCE_DIR}/example/dce-wifi-video-sample.ts" -vf scale=320:180 -r 24 \
+    -c:v mpeg1video -q:v 3 -g 24 -c:a mp2 -b:a 128k -ac 2 -ar 44100 \
+    -f mpeg "${BIN_DCE}/video.mpg"
+# and the WebM (VP9/Opus) version Chromium plays (--browser=chrome), with the
+# system's ffmpeg: the one above has no VP9 encoder.
+if command -v ffmpeg > /dev/null && ffmpeg -hide_banner -encoders 2> /dev/null | grep -q libvpx-vp9; then
+    ffmpeg -nostdin -hide_banner -loglevel error -y \
+        -i "${DCE_DIR}/example/dce-wifi-video-sample.ts" -vf scale=640:360 \
+        -c:v libvpx-vp9 -b:v 600k -deadline good -cpu-used 4 -c:a libopus -b:a 96k \
+        "${BIN_DCE}/video.webm"
+fi
+
+if [ -f /usr/include/FL/Fl.H ]; then
+    echo "== dillo ${DILLO_REV}"
+    fetch_git https://github.com/dillo-browser/dillo.git "${DILLO_REV}" dillo
+    (
+        cd "${SRC}/dillo"
+        # Single process, single thread (no threaded DNS), no TLS: the browser
+        # of the dce-dillo example, drawing on the host X display through
+        # DCE's host socket passthrough.
+        [ -f configure ] || ./autogen.sh > /dev/null 2>&1
+        CFLAGS="-fPIC -g -O1 -U_FORTIFY_SOURCE -fno-stack-protector" \
+        CXXFLAGS="-fPIC -g -O1 -U_FORTIFY_SOURCE -fno-stack-protector" \
+        LDFLAGS="-pie -rdynamic" ./configure --disable-tls --disable-threaded-dns > /dev/null
+        make -j"${JOBS}" > /dev/null 2>&1
+    )
+    cp "${SRC}/dillo/src/dillo" "${BIN_DCE}/"
+fi
+
+if [ -d /usr/include/gtk-4.0 ] && command -v meson > /dev/null && command -v ninja > /dev/null; then
+    echo "== curl ${CURL_VERSION} (static library with OpenSSL for northstar)"
+    fetch_tar "https://curl.se/download/curl-${CURL_VERSION}.tar.gz" "curl-${CURL_VERSION}" \
+        05fc17ff25b793a437a0906e0484b82172a9f4de02be5ed447e0cab8c3475add
+    (
+        cd "${SRC}/curl-${CURL_VERSION}"
+        # HTTPS via OpenSSL; disable the other libraries Ubuntu's libcurl drags
+        # in (krb5, ldap, ssh, gnutls...), which would each need DCE shims.
+        CFLAGS="-fPIC -g -O1 -U_FORTIFY_SOURCE -fno-stack-protector" ./configure \
+            --prefix="${SRC}/curl-install" --disable-shared --enable-static \
+            --with-openssl --without-libpsl --without-zstd --without-brotli \
+            --without-nghttp2 --without-libidn2 --without-librtmp --without-libssh \
+            --without-libssh2 --disable-ldap --disable-ldaps --disable-rtsp --disable-dict \
+            --disable-telnet --disable-tftp --disable-pop3 --disable-imap --disable-smb \
+            --disable-smtp --disable-gopher --disable-mqtt --disable-ares \
+            --disable-threaded-resolver --disable-unix-sockets --disable-ntlm \
+            --disable-docs --disable-manual > /dev/null
+        make -j"${JOBS}" > /dev/null 2>&1
+        make install > /dev/null 2>&1
+    )
+
+    echo "== northstar (${NORTHSTAR_REV})"
+    fetch_git "${NORTHSTAR_REPO}" "${NORTHSTAR_REV}" northstar
+    (
+        cd "${SRC}/northstar"
+        # DCE finds the program's main() with dlsym(): export it (the project
+        # localises every symbol of its executables).
+        printf '{\n  global: main;\n  local: *;\n};\n' > src/exe-local.map
+        # Link the browser as a shared object: DCE loads it like one, and the
+        # linker would otherwise turn its thread local variables into fixed
+        # %fs offsets (local-exec TLS) that point into the simulator's TLS.
+        # No PIE (copy relocations of stdio variables), no LTO.
+        sed -i "s/'b_pie=true'/'b_pie=false'/; s/'b_lto=true'/'b_lto=false'/" meson.build
+        sed -i "s/pie: host_machine.system() != 'windows',/pie: false,/" src/gtk/meson.build
+        # Keep symbols (gdb backtraces of the simulation name the browser's
+        # functions). Sound: DCE threads are cooperative, so the SDL2 mixer
+        # thread only runs between the browser's decode and paint bursts; a
+        # 4096 frame (93 ms) device buffer outlasts them, 1024 underruns.
+        sed -i "s/cc.get_supported_link_arguments(\['-Wl,-s'\]),/cc.get_supported_link_arguments([]),/" meson.build
+        sed -i "s/want.samples = 1024;/want.samples = 4096;/" src/audio/audio.c
+        grep -q "DCE: loaded like a shared object" src/meson.build || sed -i \
+            "s|\(\['-Wl,--version-script=' + meson.current_source_dir() / 'exe-local.map'\]\))|\1) + ['-shared']  # DCE: loaded like a shared object|" src/meson.build
+        # -fPIC and no LTO/-fPIE: a PIE compiled executable gets copy
+        # relocations of stdin/stdout/stderr that DCE's per-process stdio
+        # cannot reach. -ftls-model=global-dynamic: an executable's own
+        # thread local variables use fixed %fs offsets, which point into the
+        # simulator's TLS once DCE has loaded the program like a shared
+        # object. Audio (SDL2 mixer, played on the host PulseAudio
+        # server through DCE) when the SDL2 headers are there, no AVIF. The
+        # browser is run with NS_NO_SANDBOX=1 --no-watchdog by dce-browser.
+        AUDIO=disabled
+        [ -f /usr/include/SDL2/SDL.h ] && AUDIO=enabled
+        PKG_CONFIG_PATH="${SRC}/curl-install/lib/pkgconfig" meson setup build \
+            -Daudio=${AUDIO} -Davif=disabled \
+            -Dc_args="-fPIC -ftls-model=global-dynamic -mno-direct-extern-access -g -O1 -U_FORTIFY_SOURCE -fno-stack-protector" \
+            -Dcpp_args="-fPIC -ftls-model=global-dynamic -mno-direct-extern-access -g -O1 -U_FORTIFY_SOURCE -fno-stack-protector" \
+            -Dc_link_args="-rdynamic" -Dcpp_link_args="-rdynamic" > /dev/null
+        ninja -C build > /dev/null 2>&1
+    )
+    cp "${SRC}/northstar/build/src/gtk/northstar" "${BIN_DCE}/"
+fi
 
 echo "== quagga ${QUAGGA_VERSION}"
 fetch_tar "https://src.fedoraproject.org/repo/pkgs/quagga/quagga-${QUAGGA_VERSION}.tar.gz/64cc29394eb8a4e24649d19dac868f64/quagga-${QUAGGA_VERSION}.tar.gz" "quagga-${QUAGGA_VERSION}" \

@@ -360,6 +360,7 @@ def build_dce_examples(module, bld):
                     ['udp-echo-client', []],
                     ['dccp-server', []],
                     ['dccp-client', []],
+                    ['numbers-server', []],
 #                    ['little-cout', []],
                     ]
 
@@ -518,6 +519,9 @@ def build_dce_kernel_examples(module, bld):
         module.add_example(needed = ['core', 'network', 'internet', 'dce'],
                            target='bin/dce-x11-hello',
                            source=['example/dce-x11-hello.cc'])
+        module.add_example(needed = ['core', 'network', 'internet', 'dce', 'wifi', 'mobility', 'csma', 'tap-bridge'],
+                           target='bin/dce-browser',
+                           source=['example/dce-browser.cc'])
     # The clip streamed by dce-wifi-video, installed with the DCE binaries so
     # that the example finds it through DCE_PATH.
     bld(rule='cp ${SRC} ${TGT}', source='example/dce-wifi-video-sample.ts',
