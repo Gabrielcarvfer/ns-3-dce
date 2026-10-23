@@ -554,6 +554,12 @@ TaskManager::SetFiberManagerType (enum FiberManagerType type)
   m_mainFiber = m_fiberManager->CreateFromCaller ();
 }
 
+bool
+TaskManager::CanClone (void) const
+{
+  return m_fiberManager != 0 && m_fiberManager->CanClone ();
+}
+
 
 void
 TaskManager::EndWait (Task *task)

@@ -600,6 +600,13 @@ uint16_t
 DceManager::Clone (Thread *thread)
 {
   NS_LOG_FUNCTION (this << thread);
+  if (!TaskManager::Current ()->CanClone ())
+    {
+      // UcontextFiberManager cannot clone a task: its Clone () returns 0,
+      // which is what the child gets, and fork () returned 0 in the parent
+      thread->err = ENOSYS;
+      return -1;
+    }
   Process *clone = new Process ();
   clone->euid = 0;
   clone->ruid = 0;

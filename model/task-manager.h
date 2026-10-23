@@ -173,6 +173,11 @@ public:
 
   bool GetNoSignal ();
 
+  /**
+   * \returns true if Clone () can clone a task (fork ()).
+   */
+  bool CanClone (void) const;
+
 private:
   enum FiberManagerType
   {

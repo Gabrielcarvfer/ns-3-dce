@@ -17,6 +17,13 @@ public:
   {
     return 0;
   }
+  /**
+   * \returns true if Clone () can clone a fiber (fork ()).
+   */
+  virtual bool CanClone (void) const
+  {
+    return false;
+  }
 
   /**
    * \param callback function to use as main loop for the
