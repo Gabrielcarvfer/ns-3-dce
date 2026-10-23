@@ -541,6 +541,7 @@ DceManager::CreateThread (struct Process *process)
   thread->hasExitValue = false;
   thread->joinWaiter = 0;
   thread->lastTime = Time (0);
+  thread->unlocksWithoutYield = 0;
   thread->childWaiter = 0;
   thread->pollTable = 0;
   thread->ioWait = std::make_pair ((UnixFd*)0,(WaitQueueEntry*)0);
@@ -881,6 +882,7 @@ DceManager::DeleteProcess (struct Process *process, ProcessEndCause type)
       delete mutex;
     }
   process->mutexes.clear ();
+  process->mutexById.clear ();
   // delete all semaphores
   for (uint32_t i = 0; i < process->semaphores.size (); ++i)
     {
@@ -1522,6 +1524,8 @@ DceManager::Execve (const char *path, const char *argv0, char *const argv[], cha
   delete process->alloc;
   process->alloc = new KingsleyAlloc ();
 
+  process->mutexById.clear ();
+  process->conditionById.clear ();
   while (!process->mutexes.empty ())
     {
       Mutex * m = process->mutexes.back ();

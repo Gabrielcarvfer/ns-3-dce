@@ -23,6 +23,7 @@
 #include <signal.h>
 #include <map>
 #include <vector>
+#include <unordered_map>
 #include <list>
 #include <set>
 #include <stdio.h>
@@ -144,8 +145,11 @@ struct Process
   std::vector<SignalHandler> signalHandlers;
   std::vector<Thread *> threads;
   std::vector<Mutex *> mutexes;
+  // the same, by id: programs such as Chromium create tens of thousands
+  std::unordered_map<uint32_t, Mutex *> mutexById;
   std::vector<Semaphore *> semaphores;
   std::vector<Condition *> conditions;
+  std::unordered_map<uint32_t, Condition *> conditionById;
   std::vector<struct AtExitHandler> atExitHandlers;
   std::set<uint16_t> children;
   bool getoptStarted; // getopt has been called by this process
@@ -217,6 +221,8 @@ struct Thread
   int h_err;
   /* thread id. */
   uint16_t tid;
+  // mutexes unlocked without letting other threads run (dce-pthread-mutex.cc)
+  uint32_t unlocksWithoutYield;
   Task *task;
   Thread *joinWaiter;
   Process *process;
