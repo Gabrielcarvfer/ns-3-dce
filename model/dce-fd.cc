@@ -7,6 +7,8 @@
 #include "socket-fd-factory.h"
 #include "waiter.h"
 #include "dce-fcntl.h"
+#include "local-stream-socket-fd.h"
+#include "local-datagram-socket-fd.h"
 #include "dce-unistd.h"
 #include "dce-poll.h"
 #include "dce-stdio.h"
@@ -420,7 +422,7 @@ int dce_socket (int domain, int type, int protocol)
     }
   else
     {
-      if (type != SOCK_DGRAM && type != SOCK_STREAM)
+      if (type != SOCK_DGRAM && type != SOCK_STREAM && type != SOCK_SEQPACKET)
         {
           current->err = EINVAL;
           return -1;
@@ -485,18 +487,42 @@ ssize_t dce_readv (int fd, const struct iovec *iov, int iovcnt)
 }
 int dce_socketpair (int domain, int type, int protocol, int sv[2])
 {
-  sv[0] = dce_socket (domain, type, protocol);
-  if (sv[0] < 0)
+  Thread *current = Current ();
+  NS_LOG_FUNCTION (current << UtilsGetNodeId () << domain << type << protocol);
+  if (domain != AF_UNIX)
+    {
+      current->err = EOPNOTSUPP;
+      return -1;
+    }
+  int fds[2];
+  fds[0] = dce_socket (domain, type, protocol);
+  if (fds[0] < 0)
     {
       return -1;
     }
-
-  sv[1] = dce_socket (domain, type, protocol);
-  if (sv[1] < 0)
+  fds[1] = dce_socket (domain, type, protocol);
+  if (fds[1] < 0)
     {
+      dce_close (fds[0]);
       return -1;
     }
-
+  // connect them to each other
+  UnixFd *a = current->process->openFiles[fds[0]]->GetFile ();
+  UnixFd *b = current->process->openFiles[fds[1]]->GetFile ();
+  LocalStreamSocketFd *streamA = dynamic_cast<LocalStreamSocketFd *> (a);
+  LocalStreamSocketFd *streamB = dynamic_cast<LocalStreamSocketFd *> (b);
+  LocalDatagramSocketFd *datagramA = dynamic_cast<LocalDatagramSocketFd *> (a);
+  LocalDatagramSocketFd *datagramB = dynamic_cast<LocalDatagramSocketFd *> (b);
+  if (streamA != 0 && streamB != 0)
+    {
+      LocalStreamSocketFd::Pair (streamA, streamB);
+    }
+  else if (datagramA != 0 && datagramB != 0)
+    {
+      LocalDatagramSocketFd::Pair (datagramA, datagramB);
+    }
+  sv[0] = fds[0];
+  sv[1] = fds[1];
   return 0;
 }
 
