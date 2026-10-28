@@ -697,7 +697,7 @@ unsigned dce_if_nametoindex (const char *ifname)
   // Kernel stacks know their interfaces; ask them.
   TypeId tid = factory->GetInstanceTypeId ();
   if (tid == TypeId::LookupByName ("ns3::LinuxSocketFdFactory")
-      || tid.GetName () == "ns3::LklSocketFdFactory")
+      || tid.GetName () == "ns3::KernelSocketFdFactory")
     {
       struct ifreq ifr;
       int fd = dce_socket (AF_INET, SOCK_DGRAM, 0);

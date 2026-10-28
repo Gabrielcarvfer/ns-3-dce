@@ -101,15 +101,14 @@ jobs:
         working-directory: ns-${{ env.NS3_VER }}
         run: ./ns3 install
 
-      # Linux/FreeBSD kernel libraries, DCE builds of ip, iperf, thttpd,
-      # wget, ping and quagga, and the ns-3-dce-quagga module.
+      # DCE builds of ip, iperf, thttpd, wget, ping and quagga, and the
+      # ns-3-dce-quagga module.
       - name: Cache kernel stack dependencies
         id: cache-kernel-deps
         uses: actions/cache@v4
         with:
           path: |
             deps/bin_dce
-            deps/kernel
             deps/ns-3-dce-quagga
           key: kernel-deps-${{ matrix.distro }}-${{ hashFiles('ns-3-dce/utils/build_kernel_deps.sh', 'ns-3-dce/utils/*.patch') }}
 
@@ -120,6 +119,21 @@ jobs:
           ./utils/build_kernel_deps.sh "$GITHUB_WORKSPACE/deps"
           rm -rf "$GITHUB_WORKSPACE/deps/src"
 
+      # Linux 6.12 kernel library (LKL) and its headers.
+      - name: Cache LKL
+        id: cache-lkl
+        uses: actions/cache@v4
+        with:
+          path: deps/lkl
+          key: lkl-${{ matrix.distro }}-${{ hashFiles('ns-3-dce/utils/build_lkl.sh', 'ns-3-dce/utils/lkl-patches/*.patch', 'ns-3-dce/utils/lkl-dce.config') }}
+
+      - name: Build LKL
+        if: steps.cache-lkl.outputs.cache-hit != 'true'
+        working-directory: ns-3-dce
+        run: |
+          ./utils/build_lkl.sh "$GITHUB_WORKSPACE/lkl-src" "$GITHUB_WORKSPACE/deps/lkl"
+          rm -rf "$GITHUB_WORKSPACE/lkl-src" "$GITHUB_WORKSPACE/deps/lkl/liblkl.so.debug"
+
       - name: Add Quagga module
         run: cp -a deps/ns-3-dce-quagga ns-3-dce/myscripts/
 
@@ -129,7 +143,7 @@ jobs:
           ./waf configure \
             --with-ns3="$GITHUB_WORKSPACE/build" \
             --prefix="$GITHUB_WORKSPACE/build" \
-            --enable-kernel-stack="$GITHUB_WORKSPACE/deps/kernel" \
+            --enable-kernel-stack="$GITHUB_WORKSPACE/deps/lkl" \
             --enable-opt
 
       - name: Build DCE
@@ -140,6 +154,7 @@ jobs:
         working-directory: ns-3-dce
         run: |
           cp -a "$GITHUB_WORKSPACE/deps/bin_dce/." build/bin_dce/
+          cp "$GITHUB_WORKSPACE/deps/lkl/liblkl.so" build/bin_dce/
           ./utils/build_bash.sh build/bin_dce
 
       - name: Run DCE tests
