@@ -24,7 +24,7 @@ BIN_DCE="${DEPS_DIR}/bin_dce"
 SRC="${DEPS_DIR}/src"
 JOBS="${JOBS:-$(nproc)}"
 
-IPROUTE2_REV="v4.4.0"
+IPROUTE2_REV="v6.12.0" # matches LKL's kernel; has "ip mptcp"
 IPUTILS_REV="s20101006"
 QUAGGA_MODULE_REV="b57e0f3184e34107c7e452b3c41807e0aff5b5ce"
 IPERF_VERSION="2.0.5"
@@ -66,9 +66,10 @@ fetch_git https://git.kernel.org/pub/scm/network/iproute2/iproute2.git "${IPROUT
 (
     cd "${SRC}/iproute2"
     ./configure > /dev/null
-    # glibc has setns(); the configure probe for it fails under GCC 14.
-    make -j"${JOBS}" "CCOPTS=-fpic -D_GNU_SOURCE -O0 -g -DUINT16_MAX=65535 -DHAVE_SETNS ${LEGACY_CFLAGS}" \
-        "LDFLAGS=-pie -rdynamic" > /dev/null 2>&1
+    # Only ip, linked with libc only (configure finds none of the optional
+    # libraries in a plain build environment).
+    make -j"${JOBS}" SUBDIRS="lib ip" "CCOPTS=-fpic -D_GNU_SOURCE -O0 -g -U_FORTIFY_SOURCE" \
+        "LDFLAGS=-pie -rdynamic" > build.log 2>&1 || { tail -50 build.log; exit 1; }
 )
 cp "${SRC}/iproute2/ip/ip" "${BIN_DCE}/"
 
