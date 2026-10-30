@@ -119,6 +119,7 @@ def configure(conf):
     ns3waf.check_modules(conf, ['mpi', 'lte'], mandatory = False)
     ns3waf.check_modules(conf, ['visualizer'], mandatory = False)
     ns3waf.check_modules(conf, ['mesh'], mandatory = False)
+    ns3waf.check_modules(conf, ['spectrum', 'internet-apps'], mandatory = False)
     ns3waf.check_modules(conf, ['applications'], mandatory = False)
     ns3waf.check_modules(conf, ['fd-net-device'], mandatory = False)
     conf.check(header_name='stdint.h', define_name='HAVE_STDINT_H', mandatory=False)
@@ -346,6 +347,7 @@ def build_dce_examples(module, bld):
                     ['udp-echo-client', []],
                     ['dccp-server', []],
                     ['dccp-client', []],
+                    ['lkl-sniff', []],
 #                    ['little-cout', []],
                     ]
 
@@ -794,6 +796,10 @@ def build(bld):
         module.add_example(needed = ['core', 'network', 'internet', 'mobility', 'wifi', 'mesh', 'dce'],
                            target='bin/dce-lkl-mesh',
                            source=['example/dce-lkl-mesh.cc'])
+        module.add_example(needed = ['core', 'network', 'internet', 'internet-apps', 'applications',
+                                     'mobility', 'wifi', 'mesh', 'spectrum', 'dce'],
+                           target='bin/dce-lkl-wifi-litmus',
+                           source=['example/dce-lkl-wifi-litmus.cc'])
     
     # build test-runner
     module.add_example(target='bin/test-runner',
